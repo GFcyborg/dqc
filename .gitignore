@@ -1,14 +1,46 @@
-# Compiled class file
+# make Git ignore selected files and directories:
+
+####################################
+# OS / editor
+####################################
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+####################################
+# Python
+####################################
+__pycache__/
+*.py[codz]
+*.pyo
+.env
+.venv
+.venv/
+venv/
+myenv/
+ENV/
+.envrc
+env.bak/
+venv.bak/
+myenv.bak/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+####################################
+# Java
+####################################
 *.class
-
-# Log file
-*.log
-
-# BlueJ files
-*.ctxt
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
 
 # Package Files #
 *.jar
@@ -19,6 +51,33 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+# Build tools
+target/          # Maven
+build/           # Gradle
+out/             # IntelliJ
+
+# Logs
+*.log
+
+####################################
+# IDE
+####################################
+.idea/
+*.iml
+.vscode/
+
+####################################
+# Misc
+####################################
+*.tmp
+*.bak
+tmp/
+
+####################################
+# ANTLR4
+qasm3*.interp
+qasm3*.tokens
+qasm3Lexer.py
+qasm3Parser.py
+qasm3ParserVisitor.py
+qasm3ParserListener.py
