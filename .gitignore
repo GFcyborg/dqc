@@ -1,0 +1,25 @@
+# Ignore Gradle project-specific cache directory
+.gradle
+.idea
+.vscode
+.cursor
+
+# Ignore Gradle build output directory
+build
+**/build/
+**/bin/
+
+# --- Java / JVM ---
+*.class
+
+# --- ANTLR generated sources ---
+**/generated-src/
+**/.antlr/
+
+# --- OS / misc ---
+.DS_Store
+Thumbs.db
+
+# GF
+**/bkp/
+**/tmp/
