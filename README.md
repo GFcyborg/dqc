@@ -144,9 +144,9 @@ x64
 
 This work has taken much inspiration and help from:
 
-* Terence Parr [ANTLR4](https://www.antlr.org/download) 2024, [git repo](https://github.com/antlr/antlr4/blob/master/doc/getting-started.md) 2025;
+* Terence Parr: [ANTLR4](https://www.antlr.org/download) 2024, **JARs**: full [compiler](https://repo.maven.apache.org/maven2/org/antlr/antlr4/4.13.2/), and lightweight [runtime](https://repo.maven.apache.org/maven2/org/antlr/antlr4-runtime/4.13.2/); live [git repo](https://github.com/antlr/antlr4/blob/master/doc/getting-started.md) 2025+;
 
-* Gabriele Tomassetti [The ANTLR Mega Tutorial](https://tomassetti.me/antlr-mega-tutorial/), 2017;
+* Gabriele Tomassetti: [The ANTLR Mega Tutorial](https://tomassetti.me/antlr-mega-tutorial/), 2017;
 
 * OpenQASM grammars (\*.g4) from [git repo](https://github.com/openqasm/openqasm/tree/main/source/grammar), 2025;
 
@@ -157,5 +157,5 @@ This work has taken much inspiration and help from:
 
 To avoid spam bots, these email addresses must be fixed manually ( \_at\_ = @):
 
-* Giacomo Fagioli at [**gifag24_at_student.sdu.dk**](mailto:gifag24_at_student.sdu.dk), or private1 [giacomofagioli_at_gmail.com](mailto:giacomofagioli_at_gmail.com), or private2 [gf_at_gfcyb.org](mailto:gf_at_gfcyb.org)
+* Giacomo Fagioli at [**gifag24_at_student.SDU.dk**](mailto:gifag24_at_student.sdu.dk), or privately at: [giacomofagioli_at_gmail.com](mailto:giacomofagioli_at_gmail.com), [gf_at_gfcyb.org](mailto:gf_at_gfcyb.org)
 * My **SDU** supervisors: Prof. [Robin Kaarsgaard](https://www.sdu.dk/en/forskning/qm/employees/vip-staff/robin-kaarsgaard-sales), Prof. [Marco Peressotti](https://portal.findresearcher.sdu.dk/en/persons/peressotti/)
