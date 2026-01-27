@@ -1,11 +1,9 @@
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.*;
-import java.nio.file.Paths;
-
 
 public class App {
     public static void main(String[] args) throws Exception {
-        CharStream input = CharStreams.fromFileName(Paths.get("app/src/main/openqasm/my.qasm").toString());
+        CharStream input = CharStreams.fromStream( App.class.getResourceAsStream("my.qasm") ); //symlink in ./app/src/main/resources/
 
         qasm3Lexer lexer = new qasm3Lexer(input);
         CommonTokenStream tokens = new CommonTokenStream(lexer);
