@@ -5,7 +5,8 @@
 * finding and marking the best split points (possibly optimizing for minimum ebit usage);
 * finding the working set of a given split point (i.e. data to be passed to the next chunck);
 * injecting teleportations at both sides of each split point;
-* overall synch (do we need a flat architecture or a controller/worker hierarchy?)
+* overall sync among chunks (do we need a flat architecture or a controller/worker hierarchy?)
+* [optional] QPU allocation
 
 This work started in Dec. 2025 as my MSc. thesis on [Quantum Computing](https://www.sdu.dk/en/qm) at the [**SDU.dk** - Southern Denmark University / IMADA dept](https://www.sdu.dk/en/om-sdu/institutter-centre/imada_matematik_og_datalogi).
 
@@ -36,9 +37,46 @@ BUILD SUCCESSFUL in 4s
 Configuration cache entry reused.
 ```
 
+### Requirements
+To install an updated version of gradle, first install any system-wide gradle version (usually out-of-date), and then use it to locally install an up-to-date wrapper to the top-level dir of this project:
+
+```text
+gf@ant:~$ sudo apt install gradle
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+gradle is already the newest version (4.4.1-20).
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+gf@ant:~$ cd ~/.../dqc
+gf@ant:~/.../dqc$ gradle wrapper --gradle-version 9.2.1
+...
+
+$ cat /usr/bin/antlr4
+#!/bin/sh
+## GF: removed the wrong trailing extra backslash from (...antlr3-runtime.jar/:)
+CLASSPATH=/usr/share/java/stringtemplate4.jar:/usr/share/java/antlr4.jar:/usr/share/java/
+antlr4-runtime.jar:/usr/share/java/antlr3-runtime.jar:/usr/share/java/treelayout.jar
+exec java -cp $CLASSPATH org.antlr.v4.Tool "$@"
+
+$ wget https://www.antlr.org/download/antlr-4.13.2-complete.jar
+# mv antlr-4.13.2-complete.jar /usr/share/java/antlr4.jar
+
+$ ll /usr/share/java/antlr4*
+... 2140045 Dec 8 16:00 /usr/share/java/antlr4-4.13.2-complete.jar
+... /usr/share/java/antlr4.jar -> antlr4-4.13.2-complete.jar
+... 326307 Dec 17 18:23 /usr/share/java/antlr4-runtime-4.13.2.jar
+... /usr/share/java/antlr4-runtime.jar -> antlr4-runtime-4.13.2.jar
+
+$ java org.antlr.v4.Tool # same as: java -jar /usr/share/java/antlr4.jar
+ANTLR Parser Generator Version 4.13.2
+...
+```
+
+
 ### Environment
 
-My current setup is:
+My current setup (just for reference) is:
 
 ```text
 gf@ant:~/.../dqc$ neofetch 
@@ -84,43 +122,23 @@ gf@ant:~/.../dqc$ antlr4
 
 ANTLR Parser Generator  Version 4.13.2
 ...
+
+gf@ant:~$ code -v
+1.108.2
+c9d77990917f3102ada88be140d28b038d1dd7c7
+x64
+
+gf@ant:~$ /snap/intellij-idea-ultimate/current/bin/idea --version
+IntelliJ IDEA 2025.3.2
+Build #IU-253.30387.90
+
+gf@ant:~$ cursor -v
+2.4.21
+dc8361355d709f306d5159635a677a571b277bc0
+x64
+
 ```
 
-### Requirements
-To install an updated version of gradle, first install any system-wide gradle version (usually out-of-date), and then use it to locally install an up-to-date version to the top-level dir of this project:
-
-```text
-gf@ant:~$ sudo apt install gradle
-Reading package lists... Done
-Building dependency tree... Done
-Reading state information... Done
-gradle is already the newest version (4.4.1-20).
-0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
-
-gf@ant:~$ cd ~/.../dqc
-gf@ant:~/.../dqc$ gradle wrapper --gradle-version 9.2.1
-...
-
-$ cat /usr/bin/antlr4
-#!/bin/sh
-## GF: removed the wrong trailing extra backslash from (...antlr3-runtime.jar/:)
-CLASSPATH=/usr/share/java/stringtemplate4.jar:/usr/share/java/antlr4.jar:/usr/share/java/
-antlr4-runtime.jar:/usr/share/java/antlr3-runtime.jar:/usr/share/java/treelayout.jar
-exec java -cp $CLASSPATH org.antlr.v4.Tool "$@"
-
-$ wget https://www.antlr.org/download/antlr-4.13.2-complete.jar
-# mv antlr-4.13.2-complete.jar /usr/share/java/antlr4.jar
-
-$ ll /usr/share/java/antlr4*
-... 2140045 Dec 8 16:00 /usr/share/java/antlr4-4.13.2-complete.jar
-... /usr/share/java/antlr4.jar -> antlr4-4.13.2-complete.jar
-... 326307 Dec 17 18:23 /usr/share/java/antlr4-runtime-4.13.2.jar
-... /usr/share/java/antlr4-runtime.jar -> antlr4-runtime-4.13.2.jar
-
-$ java org.antlr.v4.Tool # same as: java -jar /usr/share/java/antlr4.jar
-ANTLR Parser Generator Version 4.13.2
-...
-```
 
 ## Citations
 
