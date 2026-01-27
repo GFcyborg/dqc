@@ -20,7 +20,7 @@ None, so far.
 
 The code is supposed to automatically generate a lot of artifacts (both binary and auto-generated code) by using **Gradle 9+** and **Antlr4**. Provided that you already have all [**requirements**](#requirements) in place, run the following command from the project root-directory (where settings.gradle is located, **NOT** from the ./app/ folder) in order to do the build:
 
-**./gradlew clean build test run --warning-mode all**
+gf@ant:~/.../dqc$ <mark> ./gradlew clean build test run --warning-mode all </mark>
 
 e.g.:
 
