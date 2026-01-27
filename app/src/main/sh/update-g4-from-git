@@ -1,8 +1,0 @@
-# new grammars from: https://github.com/openqasm/openqasm/blob/main/source/grammar/
-
-echo "NOTICE: This script should be run from the same directory where it's located."
-cd bkp/ ; wget --backups=3 \
-    https://raw.githubusercontent.com/openqasm/openqasm/refs/heads/main/source/grammar/qasm3Lexer.g4 \
-    https://raw.githubusercontent.com/openqasm/openqasm/refs/heads/main/source/grammar/qasm3Parser.g4 \
-    && date > ../$(basename "$0")_last-run.timestamp \
-    && cp -fa *.g4 ../../antlr/
