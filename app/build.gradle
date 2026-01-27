@@ -38,5 +38,5 @@ tasks.compileJava { dependsOn tasks.generateGrammarSource }   //ensures *Lexer+P
 
 tasks.clean {
     delete "$buildDir/generated-src"
-    delete "$projectDir/bin"
+    delete "bin"
 }
