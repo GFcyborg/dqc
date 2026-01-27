@@ -159,3 +159,8 @@ To avoid spam bots, these email addresses must be fixed manually ( \_at\_ = @):
 
 * Giacomo Fagioli at [**gifag24_at_student.SDU.dk**](mailto:gifag24_at_student.sdu.dk), or privately at: [giacomofagioli_at_gmail.com](mailto:giacomofagioli_at_gmail.com), [gf_at_gfcyb.org](mailto:gf_at_gfcyb.org)
 * My **SDU** supervisors: Prof. [Robin Kaarsgaard](https://www.sdu.dk/en/forskning/qm/employees/vip-staff/robin-kaarsgaard-sales), Prof. [Marco Peressotti](https://portal.findresearcher.sdu.dk/en/persons/peressotti/)
+
+
+## License
+
+GPL3: GNU GENERAL PUBLIC LICENSE Version 3.
