@@ -150,6 +150,8 @@ This work has taken much inspiration and help from:
 
 * OpenQASM grammars (\*.g4) from [git repo](https://github.com/openqasm/openqasm/tree/main/source/grammar), 2025;
 
+* coding assistant AI's: ChatGPT, Copilot, Gemini, Claude
+
 
 ## Contacts
 
