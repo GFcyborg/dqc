@@ -1,1 +1,0 @@
-../openqasm/my.qasm
