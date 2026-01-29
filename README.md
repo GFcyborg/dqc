@@ -22,7 +22,7 @@ The code is supposed to automatically generate a lot of artifacts (both binary a
 
 gf@ant:~/.../dqc$ <mark> ./gradlew clean build run --warning-mode all </mark>
 
-e.g.:
+e.g.: this is the parse-tree printout of this simple OpenQASM [adder](https://github.com/openqasm/openqasm/blob/main/examples/adder.qasm):
 
 ```text
 gf@ant:~/.../dqc$ ./gradlew clean build run --warning-mode all
