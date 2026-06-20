@@ -30,3 +30,23 @@ python main.py
 - The default example loads from `qasm/`.
 - Save-split output is written under `qasm/split/<stem>/`.
 - If you prefer, `python -m app` is equivalent to `python main.py`.
+
+## Tests
+
+1. Activate the virtual environment from the repository root:
+
+```bash
+. .venv/bin/activate
+```
+
+1. Install dependencies (includes test dependencies):
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+1. Run the regression suite:
+
+```bash
+python -m pytest -q
+```

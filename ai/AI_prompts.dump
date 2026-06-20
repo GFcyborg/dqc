@@ -522,6 +522,14 @@ rename "dqc_app" dir to "app", and make sure all refs get updated.
 The diagnostics dialog (and all BoM's) should list the packages in alphabetic order.
 2026.06.20-13.36
 ---------------------------------------------
+now the app is quiet stable and complete in regards to basic/monolithic QASM code execution/analysis: before we start working on the distributed execution of the split chunks (and all the involved q-communications), we need to have a solid base of tests preventing future regressions.
+2026.06.20-13.57
+---------------------------------------------
+how can I manually run all python unit tests from command line?
+
+[answer: source .venv/bin/activate; python -m pytest -q ]
+2026.06.20-14.03
+---------------------------------------------
 
 
 
