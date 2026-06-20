@@ -1,6 +1,6 @@
 # dqc
 
-Desktop QASM3 workbench built with PySide6.
+Distributed Quantum Computing (DQC): a QASM3 workbench to simulate circuit split-execution over a mesh of nodes, 1 chunk per QPU.
 
 ## Quick Setup
 
