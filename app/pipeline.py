@@ -15,6 +15,11 @@ import time
 
 import networkx as nx
 
+try:
+    import kahypar as _kahypar  # type: ignore
+except Exception:
+    _kahypar = None
+
 
 STDGATE_NAMES = {
     "barrier",
@@ -502,10 +507,11 @@ def rewrite_bit_to_bool_cast(lines: list[str], enabled: bool, spans: list[Rewrit
         prefix = match.group("prefix")
         suffix = match.group("suffix")
         value = match.group("value")
-        rewritten_code = f"{prefix}{'!' if value == '0' else ''}{expr}{suffix}"
+        rewritten_expr = f"{'!' if value == '0' else ''}{expr}"
+        rewritten_code = f"{prefix}{rewritten_expr}{suffix}"
         tail = line[len(code_only):] if len(line) >= len(code_only) else ""
         rewritten_line = f"{rewritten_code}{tail}"
-        spans.append(RewriteSpan(line_no, line, rewritten_line, 7, "Rewrote bit comparison to a boolean cast."))
+        spans.append(RewriteSpan(line_no, line, rewritten_expr, 7, "Rewrote bit comparison to a boolean cast."))
         rewritten_lines.append(rewritten_line)
 
     return rewritten_lines
@@ -673,6 +679,11 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
     matches: dict[int, list[tuple[int, str, int, int]]] = defaultdict(list)
     code_lines, comment_spans = _comment_aware_code_and_spans(lines)
     bit_names = {match.group(1) for match in BIT_DECL_PATTERN.finditer(source)}
+    colliding_gate_names: set[str] = set()
+    for code_line in code_lines:
+        gate_match = GATE_DEF_PATTERN.match(code_line)
+        if gate_match and gate_match.group(1) in STDGATE_NAMES:
+            colliding_gate_names.add(gate_match.group(1))
 
     for line_no, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -685,9 +696,10 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         code_only = code_lines[line_no - 1]
 
-        gate_match = GATE_DEF_PATTERN.match(code_only)
-        if gate_match and gate_match.group(1) in STDGATE_NAMES:
-            matches[line_no].append((5, "Rename colliding gates", gate_match.start(1), gate_match.end(1)))
+        for gate_name in sorted(colliding_gate_names):
+            pattern = re.compile(rf"\b{re.escape(gate_name)}\b")
+            for match in pattern.finditer(code_only):
+                matches[line_no].append((5, "Rename colliding gates", match.start(), match.end()))
 
         cast_match = BIT_IF_CAST_PATTERN.match(code_only.rstrip())
         if cast_match and bit_names:
@@ -1085,7 +1097,7 @@ def build_chunk_dependency_graph(flows: list[ChunkFlow]) -> nx.DiGraph:
     return graph
 
 
-def suggest_split_points(source: str, max_points: int = 3) -> tuple[list[int], str]:
+def _heuristic_split_points(source: str, max_points: int) -> tuple[list[int], str]:
     lines = normalize_lines(source)
     scores: list[tuple[int, int, str]] = []
     for line_no, line in enumerate(lines, start=1):
@@ -1104,9 +1116,219 @@ def suggest_split_points(source: str, max_points: int = 3) -> tuple[list[int], s
     if not scores:
         return [], "No strong split boundaries were detected; the heuristic prefers multi-qubit boundaries and control-flow transitions."
     scores.sort(key=lambda item: (-item[0], item[1]))
-    selected = [line_no for _, line_no, _ in scores[:max_points]]
+    selected = sorted(line_no for _, line_no, _ in scores[:max_points])
     reason = ", ".join(f"line {line_no}" for line_no in selected)
     return selected, f"Heuristic split suggestions based on interaction density and control-flow boundaries: {reason}."
+
+
+def _resolve_kahypar_ini() -> Path | None:
+    if _kahypar is None:
+        return None
+    module_file = getattr(_kahypar, "__file__", None)
+    if not module_file:
+        return None
+    base = Path(module_file).resolve().parent
+    candidates = sorted(base.rglob("*.ini"))
+    if not candidates:
+        return None
+    preferred = [c for c in candidates if "cut" in c.name.lower()]
+    return preferred[0] if preferred else candidates[0]
+
+
+def _kahypar_partition(vertex_count: int, hyperedges: list[list[int]], edge_weights: list[int], k: int) -> list[int] | None:
+    if _kahypar is None or vertex_count == 0 or k <= 1:
+        return None
+    if not hyperedges or len(hyperedges) != len(edge_weights):
+        return None
+
+    # KaHyPar expects strictly positive hyperedge weights; sanitize defensively.
+    filtered_edges: list[list[int]] = []
+    filtered_weights: list[int] = []
+    for edge, weight in zip(hyperedges, edge_weights):
+        unique_edge = sorted(set(int(v) for v in edge if 0 <= int(v) < vertex_count))
+        if len(unique_edge) < 2:
+            continue
+        filtered_edges.append(unique_edge)
+        filtered_weights.append(max(1, int(weight)))
+
+    if not filtered_edges:
+        return None
+
+    flattened: list[int] = []
+    edge_index: list[int] = [0]
+    for edge in filtered_edges:
+        flattened.extend(edge)
+        edge_index.append(len(flattened))
+
+    hypergraph = None
+    signatures: list[tuple[Any, ...]] = [
+        # Preferred ordering from KaHyPar Python bindings:
+        # num_nodes, num_hyperedges, hyperedge_indices, hyperedges, k, edge_weights, node_weights
+        (vertex_count, len(filtered_edges), edge_index, flattened, k, filtered_weights, [1] * vertex_count),
+        # Fallback variant seen in some builds.
+        (vertex_count, len(filtered_edges), edge_index, flattened, k, [1] * vertex_count, filtered_weights),
+        (vertex_count, len(filtered_edges), edge_index, flattened, k, filtered_weights),
+        (vertex_count, len(filtered_edges), edge_index, flattened, k),
+    ]
+    for args in signatures:
+        try:
+            hypergraph = _kahypar.Hypergraph(*args)
+            break
+        except Exception:
+            hypergraph = None
+    if hypergraph is None:
+        return None
+
+    try:
+        context = _kahypar.Context()
+    except Exception:
+        return None
+
+    try:
+        if hasattr(context, "suppressOutput"):
+            context.suppressOutput(True)
+        if hasattr(context, "setK"):
+            context.setK(k)
+        if hasattr(context, "setSeed"):
+            context.setSeed(42)
+        if hasattr(context, "setEpsilon"):
+            context.setEpsilon(0.03)
+        if hasattr(context, "loadINIconfiguration"):
+            ini_file = _resolve_kahypar_ini()
+            if ini_file is not None:
+                context.loadINIconfiguration(str(ini_file))
+        if hasattr(_kahypar, "Objective") and hasattr(context, "setObjective"):
+            objective = getattr(_kahypar.Objective, "cut", None)
+            if objective is not None:
+                context.setObjective(objective)
+    except Exception:
+        return None
+
+    try:
+        _kahypar.partition(hypergraph, context)
+    except Exception:
+        return None
+
+    try:
+        return [int(hypergraph.blockID(index)) for index in range(vertex_count)]
+    except Exception:
+        return None
+
+
+def suggest_split_points(source: str, max_points: int | None = None, distributed_nodes: int = 3) -> tuple[list[int], str]:
+    distributed_nodes = max(1, min(8, int(distributed_nodes)))
+    target_points = distributed_nodes - 1
+    if max_points is not None:
+        target_points = min(target_points, max(0, int(max_points)))
+    if target_points <= 0:
+        return [], f"Distributed split suggestions disabled for {distributed_nodes} QPU node(s): at least 2 nodes are required."
+
+    lines = normalize_lines(source)
+    code_lines, _ = _comment_aware_code_and_spans(lines)
+    executable_lines: list[int] = []
+    line_identifiers: dict[int, set[str]] = {}
+
+    reserved_tokens = {
+        "OPENQASM",
+        "include",
+        "pragma",
+        "if",
+        "for",
+        "while",
+        "switch",
+        "case",
+        "default",
+        "gate",
+        "def",
+        "defcal",
+        "measure",
+        "reset",
+    }
+
+    for line_no, code_only in enumerate(code_lines, start=1):
+        stripped = code_only.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("OPENQASM", "include", "pragma ", "//", "/*", "*", "*/")):
+            continue
+        if stripped in {"{", "}", "};"}:
+            continue
+        if re.match(r"^(qubit|bit|int|uint|float|bool|array|const|input|output)\b", stripped):
+            continue
+        executable_lines.append(line_no)
+        line_identifiers[line_no] = {token for token in IDENT_PATTERN.findall(stripped) if token not in reserved_tokens}
+
+    if len(executable_lines) < 2:
+        return [], "Not enough executable statements to suggest split points."
+
+    identifier_to_vertices: dict[str, list[int]] = defaultdict(list)
+    for vertex, line_no in enumerate(executable_lines):
+        for name in line_identifiers.get(line_no, set()):
+            identifier_to_vertices[name].append(vertex)
+
+    if not identifier_to_vertices:
+        return _heuristic_split_points(source, min(target_points, 3))
+
+    qubit_names = {match.group(1) for match in re.finditer(r"^\s*qubit(?:\[[^\]]+\])?\s+([A-Za-z_][A-Za-z0-9_]*)", source, re.MULTILINE)}
+    bit_names = {match.group(1) for match in re.finditer(r"^\s*bit(?:\[[^\]]+\])?\s+([A-Za-z_][A-Za-z0-9_]*)", source, re.MULTILINE)}
+
+    hyperedges: list[list[int]] = []
+    edge_weights: list[int] = []
+    for name, vertices in sorted(identifier_to_vertices.items()):
+        unique_vertices = sorted(set(vertices))
+        if len(unique_vertices) < 2:
+            continue
+        hyperedges.append(unique_vertices)
+        if name in qubit_names:
+            edge_weights.append(12)
+        elif name in bit_names:
+            edge_weights.append(4)
+        else:
+            edge_weights.append(2)
+
+    if not hyperedges:
+        return _heuristic_split_points(source, min(target_points, 3))
+
+    chain_weight = max(8, sum(edge_weights) // max(1, len(edge_weights)))
+    for left in range(len(executable_lines) - 1):
+        hyperedges.append([left, left + 1])
+        edge_weights.append(chain_weight)
+
+    k = min(distributed_nodes, len(executable_lines))
+    partition = _kahypar_partition(len(executable_lines), hyperedges, edge_weights, k)
+    if partition is None:
+        selected, reason = _heuristic_split_points(source, min(target_points, 3))
+        return selected, f"KaHyPar unavailable; {reason}"
+
+    boundary_candidates: list[int] = []
+    for idx in range(len(executable_lines) - 1):
+        if partition[idx] != partition[idx + 1]:
+            candidate = executable_lines[idx + 1]
+            if 1 < candidate <= len(lines):
+                boundary_candidates.append(candidate)
+
+    if not boundary_candidates:
+        selected, reason = _heuristic_split_points(source, min(target_points, 3))
+        return selected, f"KaHyPar returned no contiguous cut boundary; {reason}"
+
+    boundary_costs: list[tuple[int, int]] = []
+    for candidate in sorted(set(boundary_candidates)):
+        previous = max(1, candidate - 1)
+        left_ids = line_identifiers.get(previous, set())
+        right_ids = line_identifiers.get(candidate, set())
+        overlap = left_ids & right_ids
+        overlap_cost = 0
+        for name in overlap:
+            overlap_cost += 12 if name in qubit_names else 4 if name in bit_names else 2
+        boundary_costs.append((overlap_cost, candidate))
+
+    boundary_costs.sort(key=lambda item: (item[0], item[1]))
+    selected = sorted(candidate for _, candidate in boundary_costs[:target_points])
+    selected = [line for line in selected if not line_is_inside_blocking_scope(source, line)]
+    if not selected:
+        return [], f"KaHyPar selected split boundaries that all fall inside guarded scopes for {distributed_nodes} QPU nodes."
+    reason = ", ".join(f"line {line_no}" for line_no in selected)
+    return selected, f"KaHyPar hypergraph partitioning selected {len(selected)} split point(s) for {distributed_nodes} QPU node(s): {reason}."
 
 
 def safe_import_qasm3():
@@ -1211,7 +1433,7 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
         return None, str(exc), run_timestamp
 
 
-def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[int], parameter_bindings: dict[str, str] | None = None, shots: int = 1024, timeout_s: int = 10, execute_runtime: bool = True) -> RewriteResult:
+def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[int], parameter_bindings: dict[str, str] | None = None, shots: int = 1024, timeout_s: int = 10, execute_runtime: bool = True, distributed_nodes: int = 3) -> RewriteResult:
     parse = safe_import_qasm3()
     rule_map = {rule.rule_id: rule.enabled for rule in rules}
     bypass = rule_map.get(0, False)
@@ -1272,7 +1494,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {exc}", kind="error"))
     dag_graph, interaction_graph, _ = qasm_token_graph(rewritten_source)
-    suggested_split_points, suggestion_reason = suggest_split_points(rewritten_source)
+    suggested_split_points, suggestion_reason = suggest_split_points(rewritten_source, distributed_nodes=distributed_nodes)
     circuit_result = None
     counts: dict[str, int] = {}
     duration_s = 0.0

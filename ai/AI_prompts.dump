@@ -530,13 +530,30 @@ how can I manually run all python unit tests from command line?
 [answer: source .venv/bin/activate; python -m pytest -q ]
 2026.06.20-14.03
 ---------------------------------------------
-
+KaHyPar hypergraph partitioning algo must be used for optimal split-points analysis/suggestions, in order to minimize the split points and the qubit exchange across N distributed QPUs/nodes (each node running max 1 chunk), where N must be customizable via Runtime menuitem "Distributed nodes/QPUs (<current value>)", where default value is N=3, and max allowed value be N=8.
+For now assume all distributed QPUs are connected in a mesh network (all-to-all), without any limitation (nor cost) for quantum-communication (qubit exchange via teleportations + classical bit ). These mesh topology and q-comm cost may vary in future, so be flexible.
+2026.06.20-18.57
+---------------------------------------------
+The packages/libs referenced in the diagnostics dialog (and all BoM's) should be clickable links to their package webpages that are checked for updates.
+2026.06.20-19.07
+---------------------------------------------
+While the red-coloring matching rule #7 (bit-to-bool cast) in the Original code view is correctly limited to the string to be rewritten (usually a conditional guard expression), its related green-coloring in Rewritten code view is wrongly spanning the whole line: instead it should be limited to the string actually rewritten.
+2026.06.20-19.19
+---------------------------------------------
+are there other rules that are affected by the same problem (excessive coloring of original code or rewritten code)? I can find at least 1 other rule misbehaving like that (#5 rename colliding gates). Check them all.
+2026.06.20-19.26
+---------------------------------------------
+Rule #5 (rename colliding gates) can be improved in the red-coloring of the Original code, by marking all occurrences (both definition and references, just like it already happens in the green-coloring of the Rewritten code): e.g. in cphase+.qasm the red-coloring is marking only the gate definition (line 1), but should also mark the ref (line 12).
+2026.06.20-19.38
+---------------------------------------------
+The console is showing this warning:
+Warning: Hyperedge with weight 0 (Hyperedge 11)
+I don't know if it's to be fixed, or it is an expected behavior of KaHyPar.
+2026.06.20-19.42
+---------------------------------------------
 
 
 ================ TODO:
-KaHyPar hypergraph partitioning algo must be used for optimal split-points analysis/suggestions, in order to minimize the split points and the qubit exchange across N distributed QPUs/nodes (each node running max 1 chunk), where N must be customizable via Runtime menuitem "Distributed nodes/QPUs (<current value>)", where default value is N=3, and max allowed value be N=8.
-For now assume all distributed QPUs are connected in a mesh network (all-to-all), without any limitation (nor cost) for quantum-communication (qubit exchange via teleportations + classical bit ). These mesh topology and q-comm cost may vary in future, so be flexible.
-
 better uint rewrite rule
 
 fix qubits/vars export/import analysis --> teleport comments

@@ -152,6 +152,22 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("my_cphase(π / 2) q[0], q[1];", result.rewritten_source)
         self.assertTrue(any(span.rule_id == 5 and "my_cphase" in span.rewritten for span in result.spans))
 
+    def test_original_rule5_marks_definition_and_reference_occurrences(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[2] q;",
+            "gate cx a, b { }",
+            "cx q[0], q[1];",
+        ])
+
+        matches = original_line_rule_matches(source)
+
+        self.assertIn(4, matches)
+        self.assertTrue(any(rule_id == 5 and source.splitlines()[3][start:end] == "cx" for rule_id, _, start, end in matches[4]))
+        self.assertIn(5, matches)
+        self.assertTrue(any(rule_id == 5 and source.splitlines()[4][start:end] == "cx" for rule_id, _, start, end in matches[5]))
+
     def test_missing_input_defaults_to_pi_over_2_minus_1(self) -> None:
         source = "\n".join([
             "OPENQASM 3.0;",

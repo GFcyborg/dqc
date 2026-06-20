@@ -43,6 +43,28 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertIn(5, suggested)
         self.assertIn("line", reason)
 
+    def test_split_suggestion_respects_distributed_node_budget(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "qubit[3] q;",
+                "bit[3] c;",
+                "h q[0];",
+                "cx q[0], q[1];",
+                "cx q[1], q[2];",
+                "measure q[0] -> c[0];",
+                "measure q[1] -> c[1];",
+                "measure q[2] -> c[2];",
+            ]
+        )
+
+        suggested_two, _ = suggest_split_points(source, distributed_nodes=2)
+        suggested_eight, _ = suggest_split_points(source, distributed_nodes=8)
+
+        self.assertLessEqual(len(suggested_two), 1)
+        self.assertLessEqual(len(suggested_eight), 7)
+
     def test_token_graph_ignores_split_and_teleport_comment_lines(self) -> None:
         source = "\n".join(
             [

@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         self.parameter_bindings: dict[str, str] = {}
         self.shots = 1024
         self.timeout_s = 10
+        self.distributed_nodes = 3
         self._find_query = ""
         self._find_case_insensitive = True
         self._find_matches: list[tuple[int, QWidget, QTextCursor]] = []
@@ -319,7 +320,7 @@ class MainWindow(QMainWindow):
         runtime_shell = QWidget()
         runtime_layout = QVBoxLayout(runtime_shell)
         runtime_layout.setContentsMargins(0, 0, 0, 0)
-        runtime_layout.addWidget(self._make_header("Runtime", [("Run now", self.run_manual), ("Shots", self.change_shots), ("Timeout", self.change_timeout)], accent="#10b981", area_name="Runtime"))
+        runtime_layout.addWidget(self._make_header("Runtime", [("Run now", self.run_manual), ("Shots", self.change_shots), ("Timeout", self.change_timeout), ("QPUs", self.change_distributed_nodes)], accent="#10b981", area_name="Runtime"))
         self.circuit_view = CircuitView()
         self.runtime_output = QPlainTextEdit()
         self.runtime_output.setReadOnly(True)
@@ -401,7 +402,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._runtime_stopwatch_label)
         self._top_split = top_split
         self._outer_split = outer_split
-        self._runtime_actions: tuple[QAction, QAction] | None = None
+        self._runtime_actions: tuple[QAction, QAction, QAction] | None = None
 
     def _apply_initial_split_sizes(self) -> None:
         width = max(1, self.width())
@@ -465,20 +466,21 @@ class MainWindow(QMainWindow):
             "openqasm3": "openqasm3",
             "antlr4-python3-runtime": "antlr4",
             "networkx": "networkx",
+            "kahypar": "kahypar",
             "matplotlib": "matplotlib",
             "pylatexenc": "pylatexenc",
         }
         target_packages = {
-            "Code": ["PySide6", "openqasm3", "antlr4-python3-runtime"],
-            "Code/Original": ["PySide6", "openqasm3", "antlr4-python3-runtime"],
-            "Code/Compatibility Rules": ["PySide6", "openqasm3", "antlr4-python3-runtime"],
-            "Code/Rewritten": ["PySide6", "openqasm3", "antlr4-python3-runtime"],
+            "Code": ["PySide6", "openqasm3", "antlr4-python3-runtime", "kahypar"],
+            "Code/Original": ["PySide6", "openqasm3", "antlr4-python3-runtime", "kahypar"],
+            "Code/Compatibility Rules": ["PySide6", "openqasm3", "antlr4-python3-runtime", "kahypar"],
+            "Code/Rewritten": ["PySide6", "openqasm3", "antlr4-python3-runtime", "kahypar"],
             "Runtime": ["PySide6", "qiskit", "qiskit-aer", "qiskit-qasm3-import", "matplotlib", "pylatexenc"],
-            "Graphs": ["PySide6", "openqasm3", "antlr4-python3-runtime", "networkx", "qiskit-qasm3-import", "matplotlib"],
-            "Graphs/AST parse-tree": ["PySide6", "openqasm3", "antlr4-python3-runtime", "networkx"],
+            "Graphs": ["PySide6", "openqasm3", "antlr4-python3-runtime", "networkx", "qiskit-qasm3-import", "matplotlib", "kahypar"],
+            "Graphs/AST parse-tree": ["PySide6", "openqasm3", "antlr4-python3-runtime", "networkx", "kahypar"],
             "Graphs/Overall DAG": ["PySide6", "qiskit-qasm3-import", "networkx", "matplotlib"],
             "Graphs/Qubit Interaction": ["PySide6", "qiskit-qasm3-import", "networkx", "matplotlib"],
-            "Graphs/Chunk Dependencies": ["PySide6", "networkx", "matplotlib"],
+            "Graphs/Chunk Dependencies": ["PySide6", "networkx", "matplotlib", "kahypar"],
         }
         return target_packages, package_import_modules
 
@@ -509,7 +511,7 @@ class MainWindow(QMainWindow):
             status = "up-to-date" if version != "not installed" else "not installed"
         else:
             status = f"out-of-date: latest is <a href='https://pypi.org/project/{package}/{latest}/'>{latest}</a>"
-        return f"<b>{package}</b>: {version} ({status})"
+        return f"<b><a href='https://pypi.org/project/{package}/'>{package}</a></b>: {version} ({status})"
 
     def _target_libraries(self, target: str) -> list[str]:
         catalog = self._bom_catalog()
@@ -652,10 +654,13 @@ class MainWindow(QMainWindow):
         timeout_action = QAction(f"Timeout ({self.timeout_s} s)", self)
         timeout_action.triggered.connect(self.change_timeout)
         runtime_menu.addAction(timeout_action)
+        nodes_action = QAction(f"Distributed nodes/QPUs ({self.distributed_nodes})", self)
+        nodes_action.triggered.connect(self.change_distributed_nodes)
+        runtime_menu.addAction(nodes_action)
         diagnostics_action = QAction("Diagnostics", self)
         diagnostics_action.triggered.connect(self.show_diagnostics)
         runtime_menu.addAction(diagnostics_action)
-        self._runtime_actions = (shots_action, timeout_action)
+        self._runtime_actions = (shots_action, timeout_action, nodes_action)
 
         help_menu = self.menuBar().addMenu("Help")
         gpl_action = QAction("GPL3 Licence", self)
@@ -939,7 +944,7 @@ class MainWindow(QMainWindow):
             analysis_source = self._split_save_source()
             bypass_rule = RuleState(rule_id=0, name="Bypass", description="", enabled=True)
             try:
-                result = rewrite_and_analyze(analysis_source, [bypass_rule], self.split_points.copy(), self.parameter_bindings, self.shots, timeout_s=self.timeout_s)
+                result = rewrite_and_analyze(analysis_source, [bypass_rule], self.split_points.copy(), self.parameter_bindings, self.shots, timeout_s=self.timeout_s, distributed_nodes=self.distributed_nodes)
                 if result.parse_tree is not None:
                     result.ast_graph = build_ast_graph(result.parse_tree)
             except Exception:
@@ -1012,7 +1017,7 @@ class MainWindow(QMainWindow):
         active_rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.enabled) for rule in self.rules]
         needs_parameters = bool(scan_inputs(analysis_source)) and not self.parameter_bindings and not getattr(self, "_suppress_parameter_prompt", False)
         try:
-            result = rewrite_and_analyze(analysis_source, active_rules, analysis_split_points, self.parameter_bindings, self.shots, timeout_s=self.timeout_s, execute_runtime=False)
+            result = rewrite_and_analyze(analysis_source, active_rules, analysis_split_points, self.parameter_bindings, self.shots, timeout_s=self.timeout_s, execute_runtime=False, distributed_nodes=self.distributed_nodes)
             if result.parse_tree is not None:
                 result.ast_graph = build_ast_graph(result.parse_tree)
             self._latest_result = result
@@ -1087,12 +1092,13 @@ class MainWindow(QMainWindow):
     def _update_runtime_menu_labels(self) -> None:
         if self._runtime_actions is None:
             return
-        shots_action, timeout_action = self._runtime_actions
+        shots_action, timeout_action, nodes_action = self._runtime_actions
         shots_action.setText(f"Qiskit shots ({self.shots})")
         if self.timeout_s == 0:
             timeout_action.setText("Timeout (no limit)")
         else:
             timeout_action.setText(f"Timeout ({self.timeout_s} s)")
+        nodes_action.setText(f"Distributed nodes/QPUs ({self.distributed_nodes})")
 
     def zoom_active(self, delta: int) -> None:
         widget = self.focusWidget()
@@ -1217,6 +1223,15 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Runtime timeout disabled", 3000)
             else:
                 self.statusBar().showMessage(f"Runtime timeout set to {self.timeout_s} seconds", 3000)
+
+    def change_distributed_nodes(self) -> None:
+        value, ok = QInputDialog.getInt(self, "Distributed nodes/QPUs", "Number of distributed QPUs:", self.distributed_nodes, 1, 8, 1)
+        if not ok:
+            return
+        self.distributed_nodes = value
+        self._update_runtime_menu_labels()
+        self.statusBar().showMessage(f"Distributed nodes/QPUs set to {self.distributed_nodes}", 3000)
+        self.refresh()
 
     def run_manual(self) -> None:
         analysis_source = self._split_save_source()

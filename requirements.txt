@@ -1,6 +1,7 @@
 antlr4-python3-runtime==4.13.2
 dill==0.4.1
 networkx==3.6.1
+kahypar
 numpy==2.4.6
 openqasm3==1.0.1
 psutil==7.2.2

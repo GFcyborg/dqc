@@ -467,24 +467,52 @@ class HtmlCodeView(QTextBrowser):
         self._teleport_lines: set[int] = set()
 
     def set_rewrite_result(self, rewritten_source: str, spans: list[Any]) -> None:
+        def _changed_fragment(original: str, rewritten: str) -> str:
+            if not original or not rewritten or original == rewritten:
+                return ""
+            prefix = 0
+            max_prefix = min(len(original), len(rewritten))
+            while prefix < max_prefix and original[prefix] == rewritten[prefix]:
+                prefix += 1
+
+            suffix = 0
+            max_suffix = min(len(original) - prefix, len(rewritten) - prefix)
+            while suffix < max_suffix and original[len(original) - 1 - suffix] == rewritten[len(rewritten) - 1 - suffix]:
+                suffix += 1
+
+            end = len(rewritten) - suffix if suffix > 0 else len(rewritten)
+            if end <= prefix:
+                return ""
+            return rewritten[prefix:end]
+
         self._line_tooltips = {}
         self._teleport_lines = set()
         tooltip_map: dict[int, list[str]] = {}
         visible_lines: set[int] = set()
+        partial_highlights: dict[int, list[str]] = {}
         snippet_tooltips: dict[str, list[str]] = {}
         teleport_tooltip = "Rule 6: split pragma rewritten into teleportation comment block"
         for span in spans:
             rewritten = str(getattr(span, "rewritten", ""))
             if not rewritten.strip():
                 continue
+            original = str(getattr(span, "original", ""))
             line_no = int(getattr(span, "line", 0))
             if line_no < 1:
                 continue
-            visible_lines.add(line_no)
             rule_id = getattr(span, "rule_id", "?")
             message = getattr(span, "message", "")
             tooltip = f"Rule {rule_id}: {message}"
             tooltip_map.setdefault(line_no, []).append(tooltip)
+            if rule_id == 7:
+                partial_highlights.setdefault(line_no, []).append(rewritten.strip())
+                continue
+            if "\n" not in rewritten and "\n" not in original:
+                fragment = _changed_fragment(original, rewritten)
+                if fragment.strip():
+                    partial_highlights.setdefault(line_no, []).append(fragment)
+                    continue
+            visible_lines.add(line_no)
             for rewritten_line in rewritten.splitlines():
                 normalized = rewritten_line.strip()
                 if normalized:
@@ -514,9 +542,38 @@ class HtmlCodeView(QTextBrowser):
             line_no: "\n".join(dict.fromkeys(messages))
             for line_no, messages in tooltip_map.items()
         }
-        self.setHtml(self._build_html(rewritten_source, visible_lines))
+        self.setHtml(self._build_html(rewritten_source, visible_lines, partial_highlights))
 
-    def _build_html(self, rewritten_source: str, visible_lines: set[int]) -> str:
+    def _build_html(self, rewritten_source: str, visible_lines: set[int], partial_highlights: dict[int, list[str]]) -> str:
+        def _highlight_snippets(line_text: str, snippets: list[str]) -> str:
+            ranges: list[tuple[int, int]] = []
+            seen: set[str] = set()
+            for snippet in sorted(snippets, key=len, reverse=True):
+                token = snippet.strip()
+                if not token or token in seen:
+                    continue
+                seen.add(token)
+                start = line_text.find(token)
+                if start < 0:
+                    continue
+                end = start + len(token)
+                if any(not (end <= left or start >= right) for left, right in ranges):
+                    continue
+                ranges.append((start, end))
+            if not ranges:
+                return self._html_escape(line_text)
+            ranges.sort()
+            parts: list[str] = []
+            cursor = 0
+            for start, end in ranges:
+                if start > cursor:
+                    parts.append(self._html_escape(line_text[cursor:start]))
+                parts.append(f"<span style='color:#22c55e'>{self._html_escape(line_text[start:end])}</span>")
+                cursor = end
+            if cursor < len(line_text):
+                parts.append(self._html_escape(line_text[cursor:]))
+            return "".join(parts)
+
         lines = rewritten_source.splitlines()
         decorated: list[str] = ["<html><body style='background:#0f1117;color:#cfd7e6;'><pre style='font-family:monospace;'>"]
         line_index = 0
@@ -535,6 +592,8 @@ class HtmlCodeView(QTextBrowser):
             escaped = self._html_escape(line)
             if line_no in self._teleport_lines:
                 decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
+            elif line_no in partial_highlights:
+                decorated.append(_highlight_snippets(line, partial_highlights[line_no]))
             elif line_no in visible_lines:
                 decorated.append(f"<span style='color:#22c55e'>{escaped}</span>")
             else:
