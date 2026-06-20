@@ -3,7 +3,7 @@ Test that the "Use rewritten code" checkbox correctly switches all graphs
 between rewritten and original code views.
 """
 import unittest
-from dqc_app.pipeline import rewrite_and_analyze, RuleState
+from app.pipeline import rewrite_and_analyze, RuleState
 
 
 class GraphSourceCheckboxTests(unittest.TestCase):

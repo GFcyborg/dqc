@@ -29,4 +29,4 @@ python main.py
 - The app uses relative paths only. Run it from the repository root so the bundled `qasm/` examples and generated `qasm/split/` artifacts resolve correctly.
 - The default example loads from `qasm/`.
 - Save-split output is written under `qasm/split/<stem>/`.
-- If you prefer, `python -m dqc_app` is equivalent to `python main.py`.
+- If you prefer, `python -m app` is equivalent to `python main.py`.

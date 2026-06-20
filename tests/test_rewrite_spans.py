@@ -4,7 +4,7 @@ import unittest
 
 from pathlib import Path
 
-from dqc_app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_points_from_source, substitute_inputs
+from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_points_from_source, substitute_inputs
 
 
 class RewriteSpanTests(unittest.TestCase):
@@ -46,7 +46,7 @@ class RewriteSpanTests(unittest.TestCase):
         result = rewrite_and_analyze(source, rules, set(), {}, shots=1024, timeout_s=10)
 
         self.assertTrue(result.counts)
-        self.assertIn("Measurement outcomes:", __import__("dqc_app.pipeline", fromlist=["summary_text"]).summary_text(result, 1024))
+        self.assertIn("Measurement outcomes:", __import__("app.pipeline", fromlist=["summary_text"]).summary_text(result, 1024))
 
     def test_split_pragmas_are_inserted_before_the_split_line(self) -> None:
         raw_source = "\n".join([

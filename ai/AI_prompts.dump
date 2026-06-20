@@ -513,8 +513,12 @@ QPainter::pen: Painter not active
 ...
 2026.06.20-11.59
 ---------------------------------------------
-
-
+GIT COMMIT
+2026.06.20-13.20
+#############################################
+rename "dqc_app" dir to "app", and make sure all refs get updated.
+2026.06.20-13.25
+---------------------------------------------
 
 ================ TODO:
 KaHyPar hypergraph partitioning algo must be used for optimal split-points analysis/suggestions, in order to minimize the split points and the qubit exchange across N distributed QPUs/nodes (each node running max 1 chunk), where N must be customizable via Runtime menuitem "Distributed nodes/QPUs (<current value>)", where default value is N=3, and max allowed value be N=8.
