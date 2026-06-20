@@ -1,0 +1,525 @@
+GF vs Github.Copilot.Student:
+---------------------------------------------
+Create an python app with a modern GUI that satisfies the following requirements:
+
+- the basic workflow is: the app lets the user pick some QASM3 file (from default dir: ./qasm/ ; default file at start-up: bell_state.qasm ) and have it loaded (read-only), live-edited (not saving the live changes), analysed (AST parse tree), transpiled (=prepared for the runtime by rewriting all (qiskit-qasm3-import)-unsupported expressions), represented as a quantum circuit graph, and finally automatically executed in 1 local qiskit runtime (initially we'll use qiskit_aer for local simulation, but later on we could switch to qiskit_ibm_runtime for remote execution on real quantum hw); the list of qiskit-supported features is found at: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table and https://quantum.cloud.ibm.com/docs/en/api/qiskit/circuit_library ;
+
+- on top of this basic/monolithic execution of the QASM3 code, we also want the app to support a pseudo-distributed execution of the (transpiled) QASM3 code over N QPUs: unfortunately qiskit AER does not support inter-runtime quantum-communication (for qubit-sharing via entangled EPR-pairs, aka ebits), so the app cannot use multiple AER runtimes to simulate those N QPUs; instead it should use 1 single AER runtime and then visually represent the QPUs as sub-scopes, sharing qubits via teleportations (injected at chunk borders). The distributed workflow is: by right-clicking on some lines the user will pick some split-points in the original code (the app should suggest/highlight optimal split-points by KaHyPar hypergraph partitioning: https://github.com/kahypar ); each split-point will inject a custom pragma directive into previous line, the pragma being described in a custom grammar called DQC (which extends the official OpenQASM 3.1 grammar: https://github.com/openqasm/openqasm/tree/main/source/grammar ; both grammars are provided in the ./grammar/ dir), then the app will save this enriched code as a *.dqc file (under ./qasm.split/<original qasm filename>/ dir), and there it will also generate a new *.dqc.qasm file which is substituting each split pragma with a concatenation of as many quantum teleportations as needed for the qubits to be shared/exported to next chunk: notice that not all the qubits imported into next chunk/scope/QPU come from the previous chunk/scope/QPU (shared qubits may come from any chunks); when injecting the teleportations, we should assume that each scope/QPUs is connected to all the others in a mesh network allowing unrestricted exchange of qubits via teleportations (we also assume all scopes/QPUs have free/unlimited access to entangled EPR-pairs, consumed for teleportations across scopes/QPUS). The 2 classical bits of each teleportations are exchanged with classical methods (we assume all scopes have unrestricted access to those bits as well). If you need an example of QASM code for teleportation, you have one in teleport+.qasm ;
+
+- GUI menus are:
+    - File, View, Runtime, Help.
+- File menuitems: "Load file ..." (for opening any file from disk), "Examples" (a quick shortcut to all files & subdirs under ./qasm/ dir, directly showed as dynamic menuitems); 
+- View menuitems: Zoom in, Zoom out, Zoom reset, "Find ..." (for searching text in any text areas); 
+- Runtime menuitems: "Run manually" (for re-running current live code without re-loading from disk, also allowing the user to input parameters if needed, e.g. qiskit-example.qasm ), "Qiskit shots (<current value>)" (for setting the iterations), "Timeout (<current value>)" (for setting a runtime timeout against infinite loops), Diagnostics (to show all libs versions, checking online for their updates, and showing timing and results of a simple smoke test on Hadamard gate for reference);
+- Help menuitems: "GPL3 Licence" (link to: https://www.gnu.org/licenses/gpl-3.0.en.html ), Bibliography (dynamically showing the contents of biblio.url file as sub-menuitems, to be links to their URLs);
+
+- the GUI should start maximized (100% of avail screen) and be sub-divided in the following areas (to be internally tabbed, when needed): Code, Graphs, Runtime; all areas should all be resizable (by dragging the dividers), zoomable (Ctrl +/-), scrollable, provided with a title-bar, and supporting right-click contextual menu with sensible options (except for the original code area, which uses right-click to mark split-points);
+    - the Code area is placed top-left: it has 3 tabs (Original, Rewritten, Compatibility Rules);
+        - the original qasm code should be editable (for live changes), showing line numbers (no word-wrapping), and should color runtime-unsupported expressions in red;
+        - the rewritten code is transpiling on-the-fly the live original code so that it's prepared for running in qiskit runtime (by applying the rewriting rules), and each rewritten expression is highlighted in green and has a mouse-over 50%-transparent tooltip explaining shortly the change rationale (rule-ID, line# in original code, original expression); any runtime-unsupported expression missing a rewriting rule should be colored in red in this tab, and its mouse-over tooltip should show the error message;
+        - "Compatibility Rules": for individually toggling the transpiling/rewriting rules (all active by default); initially these are the rewriting rules (all identified by an incremental rule-ID#): temporarily disable (and gray out) all the other rules without losing their toggles (this is handy to avoid losing custom preferences when debugging rule effects); drop all comments; drop all blank lines; injects "OPENQASM 3.1;" as first line, if the original code is missing an OPENQASM header; inject 'include "stdgates.inc";' as second line, if missing; rename (=add "my_" prefix to) custom gate names, if colliding with any gate defined in stdgates.inc;
+    - the Graphs area is placed at the bottom (100% width): it has 4 tabs (based on the rewritten code by default, but the title bar should show a toggle to switch to the original code): AST parse-tree (by openqasm3 and/or antlr4-python3-runtime), Overall DAG, Qubit Interaction, Chunk Dependencies (with directed edges labeled with the vars, qubits and classical bits, that need to be exported/imported by each chunk); all graphs are zoomable (max zoom-out stops when fully visible), autofitting at load-time;
+    - the Runtime area is placed top-right: it's not tabbed but split in 2 parts (resizable): the top part/area is taking 80% of height and it shows the overall circuit drawing (zoomable, scrollable, autofitting, max zoom-out at fully-visible image, draggable when not-fully-visible), while the bottom part/area (taking the remainder 20%) is showing the textual output of the execution, something like this:
+
+Circuit summary: width=2 qubits, depth=3 parallel steps, size=3 gates, volume=...;
+Rutime started at 2026-06-04 09:40:27.233 UTC, duration 00:00:01.551, shots 1024;
+Measurement outcomes:
+  readings -> occurrences (share of shots)
+  11       -> 531 (51.86%)
+  00       -> 493 (48.14%)
+...
+2026.06.04-13.07
+---------------------------------------------
+Fix the following problems:
+- in general:
+    - the colors are too dark and too solid: use lighter and gradient colors instead (especially for the backgrounds);
+    - the 3 big areas (Code, Graphs, Runtime) are not easily recognizable at first sight: make them framed and add diff-colored title-bars; also, they should be resizable by dragging all divisors (now the horizontal divisor is fixed); the initial horizontal size of the code area should be 20%, while the Runtime area should take the remainder 80%; also: the initial vertical size of the graphs area should be 50%;
+    - the find feature should look into all code tabs (both original and rewritten);
+    - the timeout should be expressed in seconds, and be 10 sec by default;
+    - the diagnostics dialog should be bigger, centered, and the up-to-date version check (inside paretheses) should read "up-to-date" or "out-of-date: latest is <version>", with the version being a clickable link to the online repo; also: the smoke test should use the current shots number;
+- in the original/rewritten code editor:
+    - line numbers are shown on top of the code (hence partially hiding it);
+    - the font used for the code should always be monospaced (just like the rewritten code);
+    - when clicking on a code-line, its background color gets black (same color of the text), hence making it unreadable;
+    - the semantic of the colors related to rewriting is obscure;
+    - the mouse-over tooltips pop-up delay is too long, and the tooltips are not transparent and offset (they should not cover the text they refer to);
+    - when applying a rule rewriting an original code (X) into some substitution text (Y), the part to be colored in red is the expression X itself, not its line-number; also, when dropping some expression X (i.e. when the rewritten code Y is just an empty string), then Y (to be colored in red) should just be "invisible", being an empty string; now instead, whatever random code happens to be located right after the dropped expression X, gets colored in green (because it naturally takes the place of the dropped X, by shifting), but it's not Y, hence it should not be colored in green due to this substitution;
+    - a right-click on any original code line should not show a contextual menu, instead it should mark it as a split-point by immediately inject a split pragma line immediately before it (so that the r-clicked line becomes the first of the next chunk); right-clicking again on a split-point (either the original line, or the pragma) will toggle it (remove the split); the File menu should get a "Save split chunks" menuitem to save the *.dqc file into ./qasm.split/<original qasm filename>/ dir;
+    - the Compatibility rules tab is obscure/unclear (how to use the focus checkboxes?!?): each rule should have exactly 1 checkbox (no focus), and by default they should all be active;
+        rule #0 is "temporarily ignore all the other rules (without losing their toggles)": this is handy to avoid losing custom preferences when debugging rule effects; when this is checked, there will be no rewriting at all (i.e. this is a master-control bypassing all others checboxes, but the toggle states are kept, though only visually);
+        rule #1 is "drop all comments"; 
+        rule #2 is "drop all blank lines"; 
+        rule #3 is 'injects "OPENQASM 3.1;" as first line, if missing'; 
+        rule #4 is "inject 'include "stdgates.inc";' as second line, if missing"; 
+        rule #5 is 'rename (=add "my_" prefix to) custom gate names, if colliding with any gate defined in stdgates.inc';
+    - where are the KaHyPar-partitioning suggestions?
+- the Runtime area is showing an error message: Circuit rendering failed: "the matplotlib library is required to use MatplotlibDrawer ..."; also: make all error messages selectable/copiable;
+- in the Graphs area:
+    - the DAG colors contrast (text vs bg) is not good enough;
+    - the qubit interaction graph and the chunk dependencies are both not available (no reason provided!! why are they not available?)
+2026.06.04-16.12
+---------------------------------------------
+in the original code area, the line numbers are covering/hiding the first letters of each line: they should never cover the code text!
+2026.06.04-16.49
+---------------------------------------------
+I have added to this workspace/context the directory qasm3-to-qiskit; qasm3-to-qiskit dir is not to be written to, it's only to be read and taken as an inspiration/example for some good parts that need to be copied+adapted into dqc project. The parts that dqc app should try to copy+adapt from qasm3-to-qiskit are the following:
+- split.py: Overall DAG;
+- split.py: Qubit Interaction;
+- split.py: split-point marking by right-clicking, and pragma injection into rewritten code;
+- split.py: Chunk dependencies graph with inter-chunk exporting/importing vars (especially qubits);
+- run.py: title bars (look&feel and color scheme);
+- run.py: circuit drawing; e.g. bell_state.qasm and qiskit_example.qasm are both drawn smoothly in run.py, while they fails in dqc;
+- run.py: diagnostics;
+- run.py: AST parse-tree auto-sync/highlight driven by cursor position in the code editor;
+
+What is NOT to be taken from qasm3-to-qiskit is the multi-chunk execution, launched by split.py into tabbed run.py (=multi runtimes): this execution model cannot be used in dqc, as dqc uses a single AER runtime for all chunks.
+Also, don't take run.py's rewriting rules, as dqc uses a different, more structured/explicit rule model.
+2026.06.04-17.40
+---------------------------------------------
+the Runtime area is still showing an error message: Circuit rendering failed: "the matplotlib library is required to use MatplotlibDrawer ...". Also: make all error messages selectable/copiable;
+2026.06.04-18.31
+---------------------------------------------
+The Runtime area is now working better, but it says:
+Circuit rendered in text mode (matplotlib unavailable): ...
+Check qasm3-to-qiskit dir (read-only) to see how to render the circuit in graphic mode with matplotlib. Also: I noticed matplotlib is not even mentioned in the diagnostics dialog, so maybe it's not properly imported?
+2026.06.04-18.39
+---------------------------------------------
+make sure the rewriting rule #1 (dropping comments) also covers multi-line comments, like that in adder.qasm ; also make sure to show the full path of the loaded file in the window titlebar.
+2026.06.04-18.59
+---------------------------------------------
+make sure the rewriting rule #1 (dropping comments) correctly handles end-of-line comments, like those in cphase+.qasm : now it truncates everything up to the end-of-file, while it should only truncate up to the end-of-line !
+2026.06.04-19.22
+---------------------------------------------
+I have to stress you again over the following problems (to be fixed), so I'll try to be more direct over the expected fixes. The rewriting-related coloring is obscure and must be fixed like this:
+    - any original expression (i.e. in the original code text) that needs to be rewritten (i.e. it's matching some rule), must be colored in red in the original code area: not only its line number, but also the expression/code itself;
+    - any rewritten expression must be colored in green (in the rewritten code text); in the specific case of dropped expressions (e.g. comments, or blank lines), the output of their rewriting rules is just an empty string (that's the meaning of "dropping" something: just take it and substitute it with an empty string, that is nothing). So dropping an expression does not actually color anything visible, because it colors an empty string, which is invisible: so dropping rules do not actually color in green anything in the rewritten code text. Instead you are wrongly coloring in green any text following the dropped expression, but that's wrong since this text has nothing to do with the substitution: so it must not be colored in green.
+    - the mouse-over tooltip must appear faster and with enough offset from the mouse pointer (in the rewritten code area) and all tooltips should also mention the exact rule-ID related to the rewritten text (i.e. the rule-ID that triggered that rewriting).
+    - when right-clicking on a line in the original code area, then a new split pragma line must be injected into the line before (i.e. the line immediately preceeding the marked split-line), and be highlighted with a bright yellow background to mark it as a split-line. If the user right-clicks (again) on a split pragma line, then he untoggles it (the split pragma line is removed and the yellow bg reverts to normal color).
+2026.06.04-15.36
+---------------------------------------------
+fix this error:
+NameError: name 'QToolTip' is not defined. Did you mean: 'tooltip'?
+Error calling Python override of QTextBrowser::mouseMoveEvent(): Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/widgets.py", line 286, in mouseMoveEvent
+    QToolTip.hideText()
+    ^^^^^^^^
+NameError: name 'QToolTip' is not defined. Did you mean: 'tooltip'?
+Error calling Python override of QTextBrowser::leaveEvent(): Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/widgets.py", line 290, in leaveEvent
+    QToolTip.hideText()
+    ^^^^^^^^
+NameError: name 'QToolTip' is not defined
+2026.06.04-19.12
+---------------------------------------------
+By comparing dqc with qasm3-to-qiskit (where qasm3-to-qiskit is not to be changed/written to), and by using teleport+.qasm , find out why dqc does not show measurement outcomes, while qasm3-to-qiskit just works.
+Also: when dealing with split *.dqc files (or with *.qasm where the user has already right-clicked/injected split-points), the split pragma lines should be visible (and highlighted in yellow bg) in the original code view.
+2026.06.04-20.17
+---------------------------------------------
+the r-click toggle injecting the split pragma is not working well in dqc GUI: the split pragma line is now injected after the line where the user r-clicked, but instead it should be injected in the line before it.
+Also: untoggling an existing split-point should happen by r-cliking either on the split pragma line, or on the yellow line. Also: the dqc file should be saved only when the user explicitly ask for saving (by clicking on the menuitem "Save split chunks"), not silently/implicitly; and when this save-action happens, the current loaded file becomes the saved dqc file (even if the user initially loaded a qasm file).
+2026.06.06-19.25
+---------------------------------------------
+there are still problems in the r-click toggle injecting the split pragma: if the user r-clicks on a normal line of code (i.e. not a split line, nor a split pragma), let's call it line N, then the split pragma shoud be injected into line N, hence pushing the original line N down to N+1 (and so on: pushing all following lines, 1 line down).
+Also: the line highlighted with a yellow bg should be the split pragma line.
+Also: the CLI shows a warning, while the GUI is working:
+
+/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/.venv/lib/python3.12/site-packages/qiskit/visualization/circuit/matplotlib.py:288: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+  mpl_figure = plt.figure()
+2026.06.06-19.41
+---------------------------------------------
+when dealing with *.dqc files, instead of handling/rewriting the split pragma into the comments of the *.dqc.qasm file (// DQC teleport bridge from chunk N to N+1 ...), I want to add a specific rewriting rule called "split-generated teleportations" which - for now - just rewrites the split pragma line into a multi-line comment listing the qubits that must be exported/imported into next chunk; something like this:
+/* Teleporting qubits into chunk N+1:
+ * q[0] from chunk N
+ * q[1] from chunk N
+ * ...
+ */
+2026.06.06-20.23
+---------------------------------------------
+the rewriting rule "split-generated teleportations" should be showed among the Compatibility Rules; also: when active, that rule should show its multi-line teleportation comment in the Rewritten tab (this is not colliding with the other rule which drops all comments, because this rule drops the comments of the original code, not the ones injected by other rewriting rules).
+It would be nice if each multi-line teleportation comment (showed in the rewritten tab) could be individually foldable (folded by default).
+2026.06.06-20.33
+---------------------------------------------
+The order of the tabs in the code area GUI should be changed to: Original, Compatibility Rules, Rewritten.
+Also: the diagnostics are correctly showing the availability of 2 new updates (qiskit 2.4.2, matplotlib 3.11.0): update them in our venv and make sure they work as expected (or better).
+Also: when it's over the graphs (circuit, DAG, qibit interaction, etc.), the mouse-wheel actions should zoom-in/out, not move scroll-bars (see the qasm3-to-qiskit dir's run.py and split.py as good examples of zooming actions over graph areas).
+2026.06.17-11.38
+---------------------------------------------
+The zoom-out action should stop/be maxed-out at full visibility (see the qasm3-to-qiskit dir's run.py and split.py as good examples of zoom-out maxing over graph areas).
+2026.06.17-11.52
+---------------------------------------------
+The Graphs area is not resizable: the divisor is not draggable. It should be like the divisor between Code and Runtime areas.
+2026.06.17-11.56
+---------------------------------------------
+The split pragmas of *.dqc files are not shown in the Original code: that's wrong! Pragmas are correctly shown when manually inserted into a *.qasm files (by right-clicking), but they get hidden when coming from the dqc code. Pragmas (and all other code) should always be visible in the Original code area (that's the whole purpose of the original code: showing the code as it is!).
+2026.06.17-12.08
+---------------------------------------------
+The compatibility rule #1 (Drop comments) should be slightly changed so that it only removes the comments from the original code, but not the comments injected by other rules (e.g. rule #6 split pragmas rewritten into comments). Also, more in general, all [active] rules must be applied in the exact sequence given by their ID number.
+2026.06.17-14.54
+---------------------------------------------
+Last change has somehow messed with the split pragma handling. 2 problems arose:
+- when dealing with *.qasm files, the right-click does not inject a split pragma anymore;
+- when dealing with *.dqc files, the split-pragma handling works in the opposite way: when rule #0 (disable all other rules) is active, then rule #6 (split pragma to comment) is applied, while when rule #0 is disabled, then rule #6 is never applied (regardless of its state checked/unchecked).
+2026.06.17-15.08
+---------------------------------------------
+fix errors of traceback:
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc+splitrun$ /home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/.venv/bin/python /home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/main.py
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/main.py", line 1, in <module>
+    from dqc_app.main_window import launch_app
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window.py", line 33
+    def _split_save_source(self) -> str:
+IndentationError: unexpected indent
+2026.06.17-15.25
+---------------------------------------------
+[...] If you want, I can next fix the remaining split-pragma behavior that still appears in your terminal tests: the .qasm right-click injection and the .dqc initial load/render path.
+
+yes, do it.
+2026.06.17-15.32
+---------------------------------------------
+The highlighting of split pragmas in yellow bg has been lost: recover it.
+2026.06.17-15.43
+---------------------------------------------
+The progressive IDs of the split pragmas has been lost: recover it. e.g:
+pragma dqc.v1.split id=1
+pragma dqc.v1.split id=2
+...
+2026.06.17-15.50
+---------------------------------------------
+Rule #6 (split pragmas to teleport comments) is not visualized correctly in the Rewritten area, even if the generated *.dqc.qasm files correctly have the teleportation comments injected. Ideally the Rewritten code should follow the same logic, when applying Rule #6.
+2026.06.17-16.02
+---------------------------------------------
+After the first injection (correct), the right-click injection of new split pragmas is injecting the new pragma lines in the wrong place. It looks like the new pragmas get injected more and more distantly from the r-clicked line, the higher is the ID of the new pragma (i.e. it builds up). The same error seems to be present also when removing the split pragmas.
+2026.06.17-16.16
+---------------------------------------------
+Still some problems with the split pragmas:
+- when I right-click to mark a split point, the Original code view gets refreshed and the focus/cursor returns to the beginning of the file, instead of keeping current position;
+- when marking several split points in the original code, not all of them generate/show their teleportation comment in the Rewritten view;
+- it's ok to color in green the autogenerated teleportation comments in the Rewritten view, but they should also be shown as comments (just like they are and as they land into *.dqc.qasm files);
+2026.06.17-18.24
+---------------------------------------------
+Let's do an overall review of the dqc app (not the qasm3-to-qiskit, which is a read-only example dir). Let's give you some context: split pragmas are an extension described in my novel dqc*.g4 grammar, not part of the standard qasm3*.g4 grammar; for this reason, these pragmas should never be found in a *.qasm file, but only in *.dqc files; also: Compatibility rules control the Rewritten code live-view (and the live-graphs, like qiskit circuit, DAG, etc. depending on the Rewritten code), not the contents of the files on disk, nor the Original code live-view.
+There are 2 typical workflows/espected behaviors:
+(A) - the user opens a *.qasm file --> the user right-clicks to toggle/mark some split points --> the split pragmas are injected into the original code area (not the files): the Original code view becomes so live-modified (in RAM memory, not saved to disk yet), and all split lines are highlighted in yellow bg in the Original code view --> the user saves the live-modified code to a *.dqc file having the split pragmas on disk --> this save-action also generates (as a byproduct) a *.dqc.qasm file transforming each split pragma into a teleportation comment. This whole case (A) works regardless of rule #6 (split pragma to teleport comments) activation state, because (A) handles about file contents and Original code view (which is not under the control of compatibility rules).
+(B) - the user opens a *.dqc file, which may already contain some split pragmas (from disk), and it may also get some extra split points added manually/live by the user (by right-clicking toggles, like in case A): all these split points should be highlighted in yellow bg in the Original code view (as usual), regardless of rule #6 activation state.
+
+Finally: when rule #6 is active, the Rewritten code should transform each split pragma (regardless of it coming from disk or from user r-clicks) into a teleportation comment (colored in yellow, not green, for coherence with the pragma color).
+
+Make sure the dqc app complies with the above workflows.
+2026.06.17-20.21
+---------------------------------------------
+move the checkbox "use rewritten code" closer to the Graphs area title (but not too close: I'd say about 20%-width away from it).
+2026.06.18-09.52
+---------------------------------------------
+make sure that all the graphs (in the graphs area) depends on the checkbox "use rewritten code" (checked by default). If the user unchecks it, then all the graphs should dynamically switch/be based on the original code (instead of the rewritten code).
+2026.06.18-09.58
+---------------------------------------------
+improve the Find dialog, so that the user can navigate to next/previous matches, across both original and rewritten code.
+2026.06.18-10.07
+---------------------------------------------
+Find dialog should be also invoked by Ctrl-F key-combo.
+2026.06.18-10.11
+---------------------------------------------
+Find feature should start looking into Original, and then look into Rewritten code. Now it starts from Rewritten.
+2026.06.18-10.14
+---------------------------------------------
+Find dialog works well, if the user uses the dialog buttons, but when they type the search text and then type <Return> key, the search misbehaves in that it jumps backwards to Rewritten code (last occurrence), instead of the expected Original code; I suspect it's beacuse the hidden focus is by default on the Previous button, and so the Return key pushes it. Instead the Return key should implicitly go forward (=Next button).
+Also: repeated use of Return key is not working (it only works the first time, then does nothing).
+2026.06.18-10.21
+---------------------------------------------
+Using the return key repeatedly in the Find dialog works inconsistently: it cycles through all the found instances but in different/random orders. Some rounds it jumps back and forth from Original to Rewritten code in some random way, then sometimes in the correct order, and then again a random cycle, and so on.
+Also: if I search for a single char, then the Next button only finds the first occurrence (and the stops finding the others), while the Previous button can find all occurrences: it looks like they scan different targets (?).
+2026.06.18-10.32
+---------------------------------------------
+Still some weird jumps while cycling through the found occurrences: some occurrences get skipped randomly.
+Also: the search should be case-insensitive by default (add a control in the find dialog).
+2026.06.18-10.37
+---------------------------------------------
+Still some quirks while cycling through the found occurrences: the Return key behaves differetly from the Next button (which it shouldn't); also some occurrences get skipped, and I suspect it's a problem of case-sensitivity.
+2026.06.18-10.44
+---------------------------------------------
+Still some quirks while cycling through the found occurrences: a regression on the Return key, which is again only working the first time (and backwards!), and then stops finding; also I suspect the search is not starting from the very beginning of the Original code (a few initial lines get skipped).
+2026.06.18-10.52
+---------------------------------------------
+In the Original code view, the color of the line numbers that are suggested as a split points should match the color of the suggestion list (blue, bold).
+2026.06.18-10.56
+---------------------------------------------
+In the Original code view, the split suggestion list (and the line numbers in the gutter) should be dynmamically updated when the user toggles some split pragmas.
+2026.06.18-11.01
+---------------------------------------------
+the split suggestion list should be sorted (ascending)
+2026.06.18-11.26
+---------------------------------------------
+Add an inner-scope anti-split guard: it should prevent the user from marking a split point inside an inner scope (like a loop or a custom gate definition body); you can (read-only) look at how this is done in the qasm3-to-qiskit split.py.
+I guess this kind of guard is already embedded in the KaHyPar hypergraph partitioning algorythm that is used by the split suggestions, right?
+2026.06.18-11.37
+---------------------------------------------
+Your inner-scope anti-split guard is too strong: now the user cannot mark any split point at all!
+Only inner scopes should be guarded against splitting.
+2026.06.18-11.42
+---------------------------------------------
+still same problem: no split marking is allowed now.
+also, the console shows this error message:
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc+splitrun/dqc$ source .venv/bin/activate; python main.py 
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window_clean.py", line 434, in toggle_split_point
+    if line_is_inside_blocking_scope(analysis_source, line_no):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'line_is_inside_blocking_scope' is not defined
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window_clean.py", line 434, in toggle_split_point
+    if line_is_inside_blocking_scope(analysis_source, line_no):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'line_is_inside_blocking_scope' is not defined
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window_clean.py", line 434, in toggle_split_point
+    if line_is_inside_blocking_scope(analysis_source, line_no):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'line_is_inside_blocking_scope' is not defined
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window_clean.py", line 434, in toggle_split_point
+    if line_is_inside_blocking_scope(analysis_source, line_no):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'line_is_inside_blocking_scope' is not defined
+Traceback (most recent call last):
+  File "/home/gf/Documents/SPDM801_thesis/dqc+splitrun/dqc/dqc_app/main_window_clean.py", line 434, in toggle_split_point
+    if line_is_inside_blocking_scope(analysis_source, line_no):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'line_is_inside_blocking_scope' is not defined
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc+splitrun/dqc$
+2026.06.18-11.46
+---------------------------------------------
+The inner-scope anti-split guard is finnally ok, but the GUI should show some feedback when the guard kicks in and prevent splitting. Now it just prevents the splitting without any feedback (the user may be misled into thinking that the app is not responding). The GUI should have some small feedback area (usually on the bottom): look at run.py or at split.py as a good example.
+2026.06.18-11.53
+---------------------------------------------
+The blocking messages from inner-scope anti-split guard (in the footer) should be more visible: in general all footer messages should be blinking for a few seconds (5?), before disappearing.
+2026.06.18-11.59
+---------------------------------------------
+Add a new rewriting rule, called "bit-to-bool Cast", for rewriting conditional expressions like "if ( <bit var> == 1 )" into "if ( <bit var> )". Also cover the opposite case "( <bit var> == 0 )" accordingly, by negating the bit with a "!" prefix.
+Here is a simple example of the expected transpiling:
+from this form:
+    bit c;
+    // ... some measurement
+    if(c==1) {}
+to this form:
+    bit c;
+    // ... some measurement
+    if(c) {}
+This rule should also cover cases where the bit-var is an element of an array, like:
+    bit[2] mid;
+    // ...;
+    if ( mid[0] == 1 ) {}
+2026.06.18-13.08
+---------------------------------------------
+Add mouse-over tooltips to the orginal code line-numbers: each line that matches any rewriting rule should have its line-number colored (in red) and the code itself should have a light-red bg (as it is already), and by hovering the mouse over them (the code and/or the line number), a tooltip should appear, referencing the rules (# and name) that would match (I use plural, because one line could match several rules, and all of them should be referenced).
+This kind of highlighting/coloring has no effect when a rule is injecting new code (missing in the original code), like rule #4 (inject missing stdgates include).
+This whole highlighting/coloring + tooltips does not depend on the activation state of the rules: the activation state of the rules controls how the rewriting happens in the Rewritten code, not how the Original code gets highlighted/colored.
+2026.06.18-16.35
+---------------------------------------------
+The coloring of Original code (due to a match to a rule) should be limited to the actual code that is to be rewritten, not all the line: e.g. Rule #1 (drop comments) should color only this part ("// a = 0001") of line 24 of adder.qasm, not the whole line #24.
+2026.06.18-17.02
+---------------------------------------------
+The circuit should be drawn before (or at least independently from) the execution of the code: e.g. when opening qiskit-example.qasm, the GUI immediately ask for a value for the parameter, in order to run the code, and until the user enters a value, the circuit does not show up. Take a (read-only) look at the good example of run.py for how to handle params input and qiskit circuit drawing. 
+2026.06.18-17.18
+---------------------------------------------
+qiskit-example.qasm is an interesting case as it's the only example using a parameterized gate (i.e. requiring user input): unfortunately the dqc GUI cannot render its circuit (the GUI shows "No circuit available" instead), nor run it (the GUI shows "No measurement counts returned."). Take a (read-only) look at the good example of run.py for how to handle params input and qiskit circuit drawing with qiskit-example.qasm.
+Also, the default value for params should be (pi/2 - 1), not 0.
+2026.06.18-17.33
+---------------------------------------------
+the params default value is now ok, but the problems with running qiskit-example.qasm and drawing its circuit are still there! look at run.py (read-only) and try to copy/adapt its circuit drawing and runtime into dqc, so that it can run and draw qiskit-example.qasm !
+2026.06.18-17.40
+---------------------------------------------
+now qiskit-example.qasm runs and shows the circuit: good! But GUI menuitem "Run manually" does not ask for a new param value: I guess it just reuses last input. Instead "Run manually" should work like run.py menuitem "Run manually (w/ params)" does. Check it out!
+2026.06.18-17.59
+---------------------------------------------
+#############################################
+GitHub Copilot Pro activated
+2026.06.18-18.23
+---------------------------------------------
+If qiskit-example.qasm param (a) is set to 0, the while loop spins infinitely: current dqc timeout guard is not working, not preventing the app to freeze. Have a look at run.py and copy/adapt the timeout system (including the GUI feedback in the status bar/footer) into dqc.
+2026.06.18-18.56
+---------------------------------------------
+the GUI dialog for params input should show:
+Parameter (<param name>) := custom value <input field>
+instead of just: <param name> <input field>
+which may be misleading, due to <param name> being too short and not informative.
+2026.06.18-19.17
+---------------------------------------------
+The Runtime output text area (starting with "Circuit summary: ...") should have an initial vertical size of at least 6 lines; also: the separator inside the Runtime area, between the text area and the circuit drawing, should be draggable vertically (up/down).
+2026.06.18-19.30
+---------------------------------------------
+Diagnostics smoke test should mention it's using "(Hadamard gate)".
+2026.06.18-19.49
+---------------------------------------------
+Rule #5 (rename colliding gates) is not working; e.g. in cphase+.qasm there is a custom gate (cphase) colliding with a stdgates-defined gate, but the custom gate does not get renamed as it should. Make sure you rewrite both the definition and all the references, by prefixing "my_".
+2026.06.18-19.58
+---------------------------------------------
+Menuitem "Run manually" and button "Run now" are not working anymore for non-parametric code (only qiskit-example.qasm works now). Fix it.
+2026.06.18-20.06
+---------------------------------------------
+Looking at run.py as (read-only) good examples, fix dqc by copying/adapting the relevant logic of AST (with cursor position 2-way synced to [Original/Rewritten] Code).
+2026.06.18-20.10
+---------------------------------------------
+the AST-to-Code sync logic is working but some expressions do not sync (while most do): it looks like identifiers are particularly problematic.
+2026.06.18-20.16
+---------------------------------------------
+Still same problem on identifiers AST-to-Code cursor sync.
+2026.06.18-20.19
+---------------------------------------------
+The GUI works fine, but the console shows some warnings:
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc+splitrun/dqc$ source .venv/bin/activate; python main.py 
+QTextCursor::setPosition: Position '444' out of range
+QTextCursor::setPosition: Position '449' out of range
+QTextCursor::setPosition: Position '444' out of range
+QTextCursor::setPosition: Position '449' out of range
+QTextCursor::setPosition: Position '505' out of range
+QTextCursor::setPosition: Position '546' out of range
+QTextCursor::setPosition: Position '505' out of range
+QTextCursor::setPosition: Position '546' out of range
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc+splitrun/dqc$
+2026.06.18-20.35
+---------------------------------------------
+I changed my mind: the Runtime output text area (starting with "Circuit summary: ...") should have an initial vertical size of at least 7 lines.
+2026.06.19-09.18
+---------------------------------------------
+I want to change the default dir for when "Loap file" is used: now it's dqc root dir, but I want it to be ./qasm/ dir. Also: I want to move ./qasm.split/ to ./qasm/split/ ; make sure all dqc app logic is coherent with this change, especially the "Save splitchunks" menuitem logic.
+2026.06.19-09.40
+---------------------------------------------
+The "Examples" menuitem should not filter out *.dqc files under ./qasm/split/ dir; actually no file under that dir should be filtered out (show everything).
+2026.06.19-09.45
+---------------------------------------------
+when the user marks a new split point in a *.qasm file, the dqc app correctly injects the split pragma into the Original code, and the teleportation comment into the Rewritten code, but the AST then loses its synch to the code: I guess the teleportation comments are not actually seen/represented by the AST.
+2026.06.19-10.11
+---------------------------------------------
+this task is going to be hard: I need a rewriting rule to handle/workaround the uint type, which is unsupported by qiskit-qasm3-import frontend but is supported by the AER backend (according to https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#4 ). You may use any strategy you want to solve this problem, but maybe you could consider these hints (coming from another AI chatbot) first:
+- you may use the supported bit[n] as a substitute for the unsupported uint[n], but only if that uint var is used for flow-control conditionals or counters, not for general uint math; this solution may also simplify the code by making uint-to-bool casting unneeded;
+- you may transpile the uint into some longer code (like unfolding loops), but this is more complicated, prone to errors and can interfere badly with other rewriting rules; this is the solution used by run.py, but it's sub-optimal/lame;
+- theoretically qiskit.circuit.classical can internally represent uint vars (via expr.Var), but only if they are built via python API, not via QASM parsing; e.g.: the following code is executable in AER (with DynamicCircuits support) and exportable into QASM3 with qiskit.qasm3.dumps(), which will correctly produce an "uint[8] counter" (unfortunately the other way around is not supported at the moment):
+
+from qiskit import QuantumCircuit
+from qiskit.circuit.classical import expr, types
+qc = QuantumCircuit(3, 3)
+counter = qc.add_var("counter", expr.lift(0, types.Uint(8)))
+qc.measure(0, 0)
+with qc.if_test(expr.equal(qc.clbits[0], expr.lift(1, types.Uint(1)))):
+    qc.store(counter, expr.add(counter, expr.lift(1, types.Uint(8))))
+
+Finally: test your solution against adder.qasm (which is using uint vars: a_in, b_in), and see if you can actually run+draw it.
+2026.06.19-11.51
+---------------------------------------------
+The implementation of the new rule #8 (uint workaround) seems to be the same as run.py's (which is sub-optimal, as it drops too much logic, like the for loops): try to improve/change it, maybe transpiling uint-to-bit instead of uint-to-int.
+2026.06.19-12.09
+---------------------------------------------
+Sometimes the coloring of rewritten code (in green) is missing, e.g. the output of rule #8 (uint workaround).
+2026.06.19-12.21
+---------------------------------------------
+If you want, I can next add a small UI-specific test/helper to snapshot which rewritten lines are marked visible for rule #8, so this doesn’t regress again.
+
+yes, do it. Also: the green-coloring of rule #8 output is still missing.
+2026.06.19-12.25
+---------------------------------------------
+Multi-rule tooltips should list the rules one per line, not in 1 line like "rule1|rule2|...".
+2026.06.19-12.29
+---------------------------------------------
+Multi-rule tooltips are still one-liners: fix it. Test the fix on adder.qasm lines 24-25.
+2026.06.19-12.32
+---------------------------------------------
+When in Compatibility Rules tab, if the user drags the horizontal divisor vertically upwards, the GUI squeezes the rules' description (not the title) in a way that makes them non-readable; also: the upward-dragging gets stopped when the divisor reaches the circuit drawing's lower-border: instead the divisor should be freely draggable in both up/down directions, and the contents of the reduced areas can just get partially out-of-visible-view (scroll-bars appear).
+2026.06.19-20.06
+---------------------------------------------
+qiskit circuit drawing area should have a light-gray bg color, and the qiskit circuit image itself should have smaller internal border (which is already white, like the drawing's bg color): look (read-only) at run.py for how to configure qiskit circuit border.
+2026.06.19-20.15
+---------------------------------------------
+I like the magnetic behavior of the GUI's internal dividers, but the vertical divider is getting magnetic too early: it should be horizontally draggable until it gets closer to the window's external border (use same threshold as the vertical divider).
+2026.06.19-20.22
+---------------------------------------------
+the Examples sub-menu should update dynamically/live with the contents of the ./qasm/ dir.
+2026.06.19-20.32
+---------------------------------------------
+Looking (read-only) at split.py as a good example, fix dqc graph "overall DAG" by copying/adapting the relevant logic.
+2026.06.20-08.19
+---------------------------------------------
+there are some strange renamings happening in some graphs (both in qiskit circuit and in the DAG): take deutsch-jozsa_balanced.qasm and see how its "anc" qubit variable is renamed into "3" in qiskit circuit graph, and 
+into "<Qubit uid=6 ..." in the DAG label of a wire. This happens even if the rewritten code is correctly keeping the original var name ("anc" in the example).
+2026.06.20-08.40
+---------------------------------------------
+If you want, I can also apply the same naming-preservation strategy to scalar classical bits for complete label consistency across all graph tabs.
+
+yes, do it.
+2026.06.20-08.43
+---------------------------------------------
+Looking (read-only) at split.py as a good example, fix dqc graph "qubit interaction" by copying/adapting the relevant logic.
+2026.06.20-08.47
+---------------------------------------------
+generally speaking, the last changes work well but there a few important cases (inverseqft2.qasm, teleport*.qasm) where the circuit drawing, the DAG, and the qubit interaction graphs got completely broken/mixed-up/messed-up: there must be something triggering this strange behavior, in their code. Find it and fix it.
+2026.06.20-08.56
+---------------------------------------------
+When the user right-clicks on a tab or an area title (Code, Runtime, Graphs), the GUI should show a dialog, named after the selected target (like "<Area name>/<Tab name> BoM"), and showing the list of external libs used by that target (probably referencing some of the libs showed by the diagnostics dialog, e.g. openqasm3 , antlr4-python3-runtime , ...).
+By the way: I suspect the diagnostics dialog could be more complete in its bill-of-materials (BoM), as I suspect some libs are missing (is antlr4 lib used somewhere by dqc app?): look at run.py diagnostics as a good example.
+2026.06.20-09.16
+---------------------------------------------
+The Runtime text output area has lost its initial vertical size of 7 lines (to be visible).
+2026.06.20-09.24
+---------------------------------------------
+Align the BoM lists even more tightly to runtime usage by deriving them from the actual diagnostics/import checks (single source of truth), so area/tab BoM and diagnostics BoM cannot drift over time.
+2026.06.20-09.25
+---------------------------------------------
+The diagnostics dialog (and all contextual BoM dialogs) are slightly unresponsive: they all start after a short delay. I suspect their checkup logic is blocking the GUI: have a look at run.py diagnostics to see how I previously fixed this problem.
+2026.06.20-09.31
+---------------------------------------------
+I understand that not all qasm expressions are supported by the qiskit/qasm libs (that's why I've created the problematic dir), but the dqc app should handle the unsupported code gracefully: instead it behaves inconsistently sometimes, e.g. the gateteleport.qasm DAG and qubit interaction graphs look completely different from the normal(=non-problematic) ones.
+2026.06.20-09.42
+---------------------------------------------
+I like that the error messages are now shown, when dealing with unsupported code (this helps the user debugging the root source of problems), but I see a general problem with the initial zoom level (both of error messages and normal graphs): error messages are way too tiny and uncentered to be readable, and even the normal graphs are shown by default at a zoom level slightly exceeding the available space (so triggering the scrollbars).
+2026.06.20-09.53
+---------------------------------------------
+The problem with initial zoom-level of graphs is still there (in the circuit area too): the initial zoom should be set to a level that prevents the scrollbars to be shown. All the graphs should initially autofit smoothly (no scrollbars needed).
+The error messages ("No circuit available") in the circuit area are still too small and uncentered.
+2026.06.20-10.01
+---------------------------------------------
+The initial zoom-level problem got better, but the circuit graph still shows scrollbars at the beginning: I suspect the problem is caused by the sizing of the runtime text area (set to min 7 lines of text) happening after the autofitting of the circuit image (hence spoiling the previous autofitting).
+2026.06.20-10.07
+---------------------------------------------
+the horizontal/lateral margins of the DAG graphs are too large: this causes the appearing of scrollbars way too early, i.e. if the user zooms in a little bit, and the graph is still completely visible in the area, then the horizontal scrollbar appears anyway, because the (exceeding) lateral margins get out of the scene. Reduce the horizontal margins.
+2026.06.20-10.16
+---------------------------------------------
+the same problem (lateral margins too large) also happens in the circuit area. fix it.
+2026.06.20-10.18
+---------------------------------------------
+the "uint" string at line #36 of adder.dqc.qasm is marked in red bg in the original code view, as if it matches rule #8 (uint workaround), but that string is located inside a comment, so it should not be considered by rule #8. More in general, all rewriting rules unrelated to comments should avoid looking at comments.
+2026.06.20-10.36
+---------------------------------------------
+Make sure that rewriting rules (when active) are applied in their numbering order.
+2026.06.20-10.42
+---------------------------------------------
+In the diagnostics I see no mention of KaHyPar hypergraph partitioning lib ( https://github.com/kahypar ): isn't it used for optimal split-points analysis/suggestions?
+
+[answer: no, it's not used for the heuristics!!]
+2026.06.20-10.52
+---------------------------------------------
+Fix "Chunk dependencies" graph by (read-only) looking at how it's done in split.py and copying+adapting it into dqc.
+2026.06.20-11.13
+---------------------------------------------
+When the user does "save split chunks" (into a *.dqc file), if the code is parameterized (like qiskit-example.dqc), the param input dialog pops up (in front of the save feedback dialog), creating a messy/overlapping GUI: this is probably due to an implicit reload of the file, because the app assumes that the context is switching from a *.qasm to a *.dqc file (which would be legitimate, if the initial loaded file was a *.qasm file, but it's not legitimate if the loaded file was already a *.dqc file).
+2026.06.20-11.31
+---------------------------------------------
+I'm about to upload the dqc code into its git repo (without the qasm3-to-qiskit dir): update dqc readme file with compact/concise instructions for setting-up the app environment from scratch, and make sure the setup is relative to any initial/custom directory (no absolute paths!).
+2026.06.20-11.45
+---------------------------------------------
+The GUI is working OK, but I get this console warning:
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc$ source .venv/bin/activate; python main.py 
+QPainter::pen: Painter not active
+QPainter::pen: Painter not active
+QPainter::pen: Painter not active
+...
+2026.06.20-11.59
+---------------------------------------------
+
+
+
+================ TODO:
+KaHyPar hypergraph partitioning algo must be used for optimal split-points analysis/suggestions, in order to minimize the split points and the qubit exchange across N distributed QPUs/nodes (each node running max 1 chunk), where N must be customizable via Runtime menuitem "Distributed nodes/QPUs (<current value>)", where default value is N=3, and max allowed value be N=8.
+For now assume all distributed QPUs are connected in a mesh network (all-to-all), without any limitation (nor cost) for quantum-communication (qubit exchange via teleportations + classical bit ). These mesh topology and q-comm cost may vary in future, so be flexible.
+
+better uint rewrite rule
+
+fix qubits/vars export/import analysis --> teleport comments
