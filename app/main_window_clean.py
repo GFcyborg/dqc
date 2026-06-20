@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
             for package in libs:
                 if package not in ordered:
                     ordered.append(package)
-        return ordered
+        return sorted(ordered, key=str.casefold)
 
     def _import_health_for_packages(self, packages: list[str]) -> dict[str, bool]:
         _, package_import_modules = self._bom_spec()
@@ -513,7 +513,8 @@ class MainWindow(QMainWindow):
 
     def _target_libraries(self, target: str) -> list[str]:
         catalog = self._bom_catalog()
-        return catalog.get(target) or catalog.get(target.split("/")[0], [])
+        libs = catalog.get(target) or catalog.get(target.split("/")[0], [])
+        return sorted(libs, key=str.casefold)
 
     def _loading_dialog_html(self, title: str, message: str) -> str:
         return f"<h2 style='margin-top:0'>{title}</h2><p>{message}</p>"
@@ -536,7 +537,8 @@ class MainWindow(QMainWindow):
     def _render_bom_target_list_html(self) -> str:
         lines = ["<p><b>Bill of materials (by GUI target):</b></p>", "<ul>"]
         for target, libs in sorted(self._bom_catalog().items()):
-            lines.append(f"<li><b>{target}</b>: {', '.join(libs)}</li>")
+            libs_sorted = sorted(libs, key=str.casefold)
+            lines.append(f"<li><b>{target}</b>: {', '.join(libs_sorted)}</li>")
         lines.append("</ul>")
         return "".join(lines)
 
