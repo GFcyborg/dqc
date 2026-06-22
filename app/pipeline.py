@@ -691,6 +691,10 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
             matches[line_no].append((2, "Drop blank lines", 0, 0))
             continue
 
+        pragma_match = DQC_PRAGMA_PATTERN.match(line)
+        if pragma_match:
+            matches[line_no].append((6, "Split-generated teleportations", 0, len(line)))
+
         for start, end in comment_spans.get(line_no, []):
             matches[line_no].append((1, "Drop comments", start, end))
 

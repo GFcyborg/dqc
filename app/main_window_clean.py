@@ -299,6 +299,26 @@ class MainWindow(QMainWindow):
         self.code_tabs.addTab(self.original_editor, "Original")
         self.code_tabs.addTab(self.rule_scroll, "Compatibility Rules")
         self.code_tabs.addTab(self.rewritten_view, "Rewritten")
+        _original_tab_legend = (
+            "<html><b>Original Code — Color Legend</b><br><br>"
+                "<table cellspacing='0' style='width:760px;border-collapse:collapse;table-layout:fixed;'>"
+                "<tr><td style='background:#fecaca;color:#b91c1c;padding:5px 10px;"
+                "border-radius:3px;border-bottom:1px solid #cbd5e1;width:220px;'>&nbsp;● Red code&nbsp;</td>"
+                "<td style='padding:5px 10px;border-bottom:1px solid #cbd5e1;'>"
+                "Matches a rewriting rule; hover for details</td></tr>"
+
+                "<tr><td style='color:#1d4ed8;font-weight:bold;padding:5px 10px;border-bottom:1px solid #cbd5e1;'>"
+            "&nbsp;● Blue bold line number&nbsp;</td>"
+                "<td style='padding:5px 10px;border-bottom:1px solid #cbd5e1;'>&nbsp;KaHyPar-suggested optimal split point</td></tr>"
+                "<tr><td style='color:#64748b;padding:5px 10px;border-bottom:1px solid #cbd5e1;'>"
+            "&nbsp;● Gray line number&nbsp;</td>"
+                "<td style='padding:5px 10px;border-bottom:1px solid #cbd5e1;'>&nbsp;Normal line — no rule involvement</td></tr>"
+                "<tr><td style='color:#b91c1c;font-weight:bold;text-decoration:underline;"
+                "padding:5px 10px;'>&nbsp;bold + underlined text&nbsp;</td>"
+                "<td style='padding:5px 10px;'>&nbsp;Split-pragma line, from disk or from a live right-click toggle</td></tr>"
+            "</table></html>"
+        )
+        self.code_tabs.setTabToolTip(0, _original_tab_legend)
         self.code_tabs.currentChanged.connect(self._sync_ast_from_current_tab)
         self.code_tabs.setMinimumHeight(0)
         self.code_tabs.setMinimumWidth(0)
@@ -307,7 +327,7 @@ class MainWindow(QMainWindow):
         code_layout = QVBoxLayout(code_shell)
         code_layout.setContentsMargins(0, 0, 0, 0)
         self.suggestion_label = QLabel("Split suggestions: none yet")
-        self.suggestion_label.setStyleSheet("color: #1d4ed8; font-weight: 600;")
+        self.suggestion_label.setStyleSheet("color: #1d4ed8; font-weight: 700; text-decoration: underline;")
         code_layout.addWidget(self._make_header("Code", [("Find", self.show_find_dialog), ("Zoom +", lambda: self.zoom_active(1)), ("Zoom -", lambda: self.zoom_active(-1)), ("Reset", self.zoom_reset)], [self.suggestion_label], accent="#3b82f6", area_name="Code"))
         code_layout.addWidget(self.code_tabs)
         self.code_tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -407,8 +427,8 @@ class MainWindow(QMainWindow):
     def _apply_initial_split_sizes(self) -> None:
         width = max(1, self.width())
         height = max(1, self.height())
-        self._top_split.setSizes([max(1, int(width * 0.2)), max(1, int(width * 0.8))])
-        self._outer_split.setSizes([max(1, height // 2), max(1, height // 2)])
+        self._top_split.setSizes([max(1, int(width * (1 / 3))), max(1, int(width * (2 / 3)))])
+        self._outer_split.setSizes([max(1, int(height * (2 / 3))), max(1, int(height * (1 / 3)))])
         runtime_total = max(1, self.runtime_split.size().height())
         output_height = max(self._runtime_output_min_height, int(runtime_total * 0.2))
         circuit_height = max(1, runtime_total - output_height)
@@ -1024,9 +1044,7 @@ class MainWindow(QMainWindow):
             self.original_editor.setOriginalRuleMatches(original_line_rule_matches(display_source))
             self.original_editor.setRewriteSpans(result.spans)
             self.rewritten_view.set_rewrite_result(result.rewritten_source, result.spans)
-            diagnostics = {span.line: QColor("#f59e0b") for span in result.spans}
-            diagnostics.update({issue.line: QColor("#ef4444") for issue in result.issues})
-            self.original_editor.setDiagnosticLines(diagnostics)
+            self.original_editor.setDiagnosticLines({})
             self.original_editor.blockSignals(True)
             if self.original_editor.toPlainText() != display_source:
                 self.original_editor.setPlainText(display_source)

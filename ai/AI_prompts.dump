@@ -551,9 +551,69 @@ Warning: Hyperedge with weight 0 (Hyperedge 11)
 I don't know if it's to be fixed, or it is an expected behavior of KaHyPar.
 2026.06.20-19.42
 ---------------------------------------------
+I changed my mind about how to highlight the split pragmas in the original Code view: now they get a yellow bg, instead I want them to get the usual light-red bg, red text color and the muoseover tooltip, just like the other matches of any rewriting rule; but, on top of that generic handling, I also want the split pragmas to get a special marking by being underlined.
+2026.06.21-15.39
+---------------------------------------------
+Set underline and bold to rule #6 (teleportations) text (only the rule title, not the description text), in Compatibility Rules tab.
+2026.06.21-17.11
+---------------------------------------------
+The special formatting of the split pragmas in the Original code view, should also be in bold (on top of underlined, as it is now).
+2026.06.21-17.16
+---------------------------------------------
+it's not working: the split pragmas are still not in bold text: try again.
+2026.06.21-17.18
+---------------------------------------------
+the initial/default vertical size of the Graphs area should be reduced to 1/3 of the height (not 1/2, as it is now); adjust/enlarge the remaining areas to take the space freed by Graphs' shrinking.
+2026.06.21-17.29
+---------------------------------------------
+the initial/default horizontal size of the Runtime area should be reduced to 2/3 of the width; adjust/enlarge the remaining area (Code) to take the space freed by Runtime's shrinking.
+2026.06.21-17.35
+---------------------------------------------
+the text of the Split Suggestions widget should be in bold, underlined, and colored in the same orange color used for the teleportations comments (in the Rewritten code area).
+2026.06.21-17.45
+---------------------------------------------
+it does not seem to be the same color: Split Suggestions' color should be a little bit darker, in order to be the same as the teleportations comments' color, right?
+2026.06.21-18.52
+---------------------------------------------
+I'm not sure about the current yellow-color semantic of some line numbers (e.g. cphase+.qasm line 2); more in general we need a complete key/legend/table (for all colors' semantics), popping up as a mouseover tooltip of the Original code tab.
+2026.06.21-19.02
+---------------------------------------------
+Now that I can read the semantics of the yellow line numbers (from the color legend), I can tell that it's probably an allucination of yours. Take for example adder.dqc line 29 ("reset b;"): its line number is marked in yellow, even if it's not matching any rule (and even less rule #3 or #4). Either you find a better explaination for that yellow coloring semantics, or you just drop it completely (I actually never asked for it: my only yellow-related requests were about the old split pragmas' bg, which I recently changed to red, and should not be changed now).
+2026.06.21-19.23
+---------------------------------------------
+In the color legend, I suspect the 1st and the 3rd semantics should be merged: they always happen together (I can't find 1 case where one matches without the other matches too). The 2nd semantic (bold+underlined) should stay in 2nd place.
+2026.06.22-12.29
+---------------------------------------------
+I changed my mind about the coloring of the Split suggestions: they should be blue (like the blue of the line numbers of those suggestions in the gutter).
+2026.06.22-12.35
+---------------------------------------------
+The Color Legend table should have horizontal-only internal borders (between the rows), and be larger, so that it can accomodate each description wrapped in max 2 lines of text.
+Also: the 1st item of that legend should simply read "● Red code", because the light-red bg does not need to be explicitly stated (as it's shown by the item's look itself), and the same is valid for its line number (represented by the leading bullet point ●).
+2026.06.22-12.59
+---------------------------------------------
+In the Color Legend, the bold+underlined item should move to last row.
+Also: the split pragmas coming from the code saved in a *.dqc file, and the split pragmas manually injected by the user via a right-click (in the live/modified-code of a *.qasm or *.dqc file), should both be handled/formatted/visualized in the same way (which is the bold+underlined format): I suspect we don't need the "Orange/amber line number" case (the split pragmas already have their special/extra formatting in bold+underlined).
+Also: make sure all the descriptions (2nd column of the Legend) take max 2 lines of text (now the 1st item takes 3 lines).
+2026.06.22-13.14
+---------------------------------------------
+Red code has still 3 lines of description in the Color Legend: fix it.
+2026.06.22-13.31
+---------------------------------------------
 
 
 ================ TODO:
+
+Also: the split pragma item should read "Orange line number", and not be in bold.
+
+
+- all split-related text (both in Original and Rewritten code) should be in bold and in the same dark-yellow/orange color (i.e. the color already used for the telportation comments): this includes the split pragmas' text itself (while the bg should now fall back under the above general rule marking the bg in light-red), the split suggestions (both the list and the line-numbers in the gutter), rule #6 (split-gen. teleports) (both the title and the description), the edges (& their labels) of the chunk dependencies graph, and obviously the teleportation comments themselves (already in the right color);
+
+- I'm not sure about current yellow coloring semantic of some line numbers (e.g. cphase+.qasm line 2); more in general we need a complete key/legend/table (for all color semantics), popping up as a mouseover tooltip of all the tabs of the Code area;
+- all the lines/edges of the DAG which are purely qubit-related (no classical bits involved, e.g. no measurements) should be in the same green color used for the Qubit interaction graph;
+Am I missing anything (about colors)?
+
+move rule #6 (split teleport comments) up ...
+
 better uint rewrite rule
 
 fix qubits/vars export/import analysis --> teleport comments

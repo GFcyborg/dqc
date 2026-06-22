@@ -92,6 +92,19 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
 
+    def test_original_rule_matches_include_split_pragma_as_rule_six(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "qubit[1] q;",
+            "pragma dqc.v1.split id=1",
+            "x q[0];",
+        ])
+
+        matches = original_line_rule_matches(source)
+
+        self.assertIn(3, matches)
+        self.assertTrue(any(rule_id == 6 for rule_id, _, _, _ in matches[3]))
+
     def test_rule_six_remaps_split_points_through_header_and_include_insertion(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",

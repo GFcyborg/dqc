@@ -8,7 +8,7 @@ from typing import Any, Callable
 from io import BytesIO
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap, QTextCursor, QTextFormat, QBrush, QPolygonF
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextFormat, QBrush, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -184,6 +184,27 @@ class ZoomableView(QGraphicsView):
         event.accept()
 
 
+class _PragmaBoldHighlighter(QSyntaxHighlighter):
+    """Applies bold + underline formatting to split-pragma lines in CodeEditor."""
+
+    def __init__(self, document: Any) -> None:
+        super().__init__(document)
+        self._pragma_lines: set[int] = set()
+        self._fmt = QTextCharFormat()
+        self._fmt.setFontWeight(700)
+        self._fmt.setFontUnderline(True)
+
+    def update_pragma_lines(self, lines: set[int]) -> None:
+        if lines != self._pragma_lines:
+            self._pragma_lines = set(lines)
+            self.rehighlight()
+
+    def highlightBlock(self, text: str) -> None:  # noqa: N802
+        line_no = self.currentBlock().blockNumber() + 1
+        if line_no in self._pragma_lines and text.strip():
+            self.setFormat(0, len(text), self._fmt)
+
+
 class LineNumberArea(QWidget):
     def __init__(self, editor: "CodeEditor") -> None:
         super().__init__(editor)
@@ -223,6 +244,7 @@ class CodeEditor(QPlainTextEdit):
         self._rewrite_spans: list[Any] = []
         self._original_rule_matches: dict[int, list[tuple[int, str, int, int]]] = {}
         self._original_rule_tooltips: dict[int, str] = {}
+        self._pragma_bold_highlighter = _PragmaBoldHighlighter(self.document())
         self._font_step = 0
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
@@ -270,8 +292,6 @@ class CodeEditor(QPlainTextEdit):
                     color = QColor("#dc2626")
                 elif line_no in self._suggested_lines:
                     color = QColor("#1d4ed8")
-                elif line_no in pragma_lines:
-                    color = QColor("#ca8a04")
                 painter.setPen(color)
                 if line_no in self._suggested_lines:
                     font = painter.font()
@@ -316,7 +336,6 @@ class CodeEditor(QPlainTextEdit):
 
     def _update_extra_selections(self) -> None:
         selections: list[QTextEdit.ExtraSelection] = []
-        pragma_lines = self._actual_pragma_lines()
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
             selection.format.setBackground(QColor(219, 234, 254, 180))
@@ -325,23 +344,11 @@ class CodeEditor(QPlainTextEdit):
             selection.cursor.clearSelection()
             selections.append(selection)
 
-        for line_no in sorted(pragma_lines):
-            block = self.document().findBlockByNumber(line_no - 1)
-            if not block.isValid():
-                continue
-            selection = QTextEdit.ExtraSelection()
-            cursor = QTextCursor(block)
-            cursor.clearSelection()
-            selection.cursor = cursor
-            selection.format.setBackground(QColor(253, 224, 71, 190))
-            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-            selections.append(selection)
-
         for line_no, entries in sorted(self._original_rule_matches.items()):
             block = self.document().findBlockByNumber(line_no - 1)
             if not block.isValid():
                 continue
-            for _, _, start, end in entries:
+            for rule_id, _, start, end in entries:
                 if end <= start:
                     continue
                 selection = QTextEdit.ExtraSelection()
@@ -389,6 +396,7 @@ class CodeEditor(QPlainTextEdit):
             selections.append(selection)
 
         self.setExtraSelections(selections)
+        self._pragma_bold_highlighter.update_pragma_lines(self._actual_pragma_lines())
 
     def _line_number_at_y(self, y: float) -> int | None:
         block = self.firstVisibleBlock()
@@ -649,7 +657,10 @@ class RulePanel(QFrame):
             row_layout.setSpacing(8)
             check = QCheckBox(f"{rule.rule_id}. {rule.name}")
             check.setChecked(rule.enabled)
-            check.setStyleSheet("color: #0f172a;")
+            if rule.rule_id == 6:
+                check.setStyleSheet("color: #0f172a; font-weight: bold; text-decoration: underline;")
+            else:
+                check.setStyleSheet("color: #0f172a;")
             check.toggled.connect(lambda checked, rule_id=rule.rule_id: self.ruleToggled.emit(rule_id, checked))
             row_layout.addWidget(check)
             layout.addWidget(row)
@@ -667,10 +678,12 @@ class RulePanel(QFrame):
             check.blockSignals(False)
             if bypass and rule_id != 0:
                 check.setEnabled(False)
-                check.setStyleSheet("color: #94a3b8;")
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 6 else ""
+                check.setStyleSheet(f"color: #94a3b8;{extra}")
             else:
                 check.setEnabled(True)
-                check.setStyleSheet("color: #0f172a;")
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 6 else ""
+                check.setStyleSheet(f"color: #0f172a;{extra}")
 
 
 class ParseTreeView(QTreeWidget):
