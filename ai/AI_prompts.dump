@@ -599,16 +599,16 @@ Also: make sure all the descriptions (2nd column of the Legend) take max 2 lines
 Red code has still 3 lines of description in the Color Legend: fix it.
 2026.06.22-13.31
 ---------------------------------------------
+"Compatibility Rules" does not need to be repeated at the top of the list of rules, as it's already showed in the tab label.
+2026.06.22-13.38
+---------------------------------------------
+The qubit labels of the DAG should be in bold and colored with the same green used in the qubit interaction graph.
+2026.06.22-13.43
+---------------------------------------------
 
 
 ================ TODO:
 
-Also: the split pragma item should read "Orange line number", and not be in bold.
-
-
-- all split-related text (both in Original and Rewritten code) should be in bold and in the same dark-yellow/orange color (i.e. the color already used for the telportation comments): this includes the split pragmas' text itself (while the bg should now fall back under the above general rule marking the bg in light-red), the split suggestions (both the list and the line-numbers in the gutter), rule #6 (split-gen. teleports) (both the title and the description), the edges (& their labels) of the chunk dependencies graph, and obviously the teleportation comments themselves (already in the right color);
-
-- I'm not sure about current yellow coloring semantic of some line numbers (e.g. cphase+.qasm line 2); more in general we need a complete key/legend/table (for all color semantics), popping up as a mouseover tooltip of all the tabs of the Code area;
 - all the lines/edges of the DAG which are purely qubit-related (no classical bits involved, e.g. no measurements) should be in the same green color used for the Qubit interaction graph;
 Am I missing anything (about colors)?
 

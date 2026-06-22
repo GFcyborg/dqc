@@ -647,9 +647,6 @@ class RulePanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        title = QLabel("Compatibility Rules")
-        title.setStyleSheet("font-weight: 700; color: #1d4ed8;")
-        layout.addWidget(title)
         for rule in rules:
             row = QWidget()
             row_layout = QHBoxLayout(row)
@@ -988,8 +985,13 @@ class QiskitDagView(QGraphicsView):
 
         for wire, y in wire_y.items():
             label = scene.addSimpleText(_wire_label(wire))
-            label.setFont(node_font)
-            label.setBrush(QBrush(QColor("#5b6d8a")))
+            label_font = QFont(node_font)
+            if wire in qubits:
+                label_font.setBold(True)
+                label.setBrush(QBrush(QColor("#1f5f2d")))
+            else:
+                label.setBrush(QBrush(QColor("#5b6d8a")))
+            label.setFont(label_font)
             label.setPos(10, y - label.boundingRect().height() / 2)
             scene.addLine(left - 8, y, scene_right, y, QPen(QColor("#d7deea")))
 
