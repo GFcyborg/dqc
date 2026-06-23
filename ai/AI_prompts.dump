@@ -649,6 +649,11 @@ yes, do it.
 The Qubit interaction graph's nodes should be draggable (just like the chunk boxes do, in the Chunks dependencies graph).
 2026.06.23-12.40
 ---------------------------------------------
+the edge labels of the Chunks dependencies graph should get closer, or even overlap, to their edges.
+2026.06.23-12.48
+---------------------------------------------
+
+
 
 ================ TODO:
 fix qubits/vars export/import analysis --> teleport comments

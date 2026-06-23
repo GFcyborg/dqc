@@ -1129,7 +1129,8 @@ class ChunkDagView(QGraphicsView):
                 anchor_fraction = 0.20 if entry["order"] % 2 == 0 else 0.80
                 anchor_x = start_x + line_dx * anchor_fraction
                 anchor_y = start_y + line_dy * anchor_fraction
-                offset = 8.0 + min(14.0, line_len * 0.03)
+                # Keep labels very close to edges (and occasionally overlapping) for readability.
+                offset = 1.5 + min(4.5, line_len * 0.012)
                 anchor_x += normal_x * offset * side
                 anchor_y += normal_y * offset * side
                 rect = _place_edge_label_with_spacing(
@@ -1140,8 +1141,8 @@ class ChunkDagView(QGraphicsView):
                     normal_x,
                     normal_y,
                     placed_label_rects,
-                    step=11.0,
-                    max_attempts=10,
+                    step=5.0,
+                    max_attempts=8,
                 )
                 placed_label_rects.append(rect)
 
