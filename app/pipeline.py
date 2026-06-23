@@ -729,12 +729,18 @@ def add_split_markers(lines: list[str], split_lines: set[int]) -> str:
     return "\n".join(out)
 
 
-def split_generated_teleportations(current_chunk: str, next_chunk: str, next_chunk_index: int) -> list[str]:
-    shared = sorted(extract_identifiers(current_chunk) & extract_identifiers(next_chunk))
+def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict[str, set[int]] | None) -> list[str]:
+    incoming_sources = incoming_sources or {}
+    dependencies: list[tuple[int, str]] = []
+    for name, sources in incoming_sources.items():
+        for source in sources:
+            dependencies.append((int(source), name))
+    dependencies.sort(key=lambda item: (item[0], item[1]))
+
     lines = [f"/* Teleporting qubits into chunk {next_chunk_index}:"]
-    if shared:
-        for name in shared:
-            lines.append(f" * {name} from chunk {next_chunk_index - 1}")
+    if dependencies:
+        for source, name in dependencies:
+            lines.append(f" * {name} from chunk {source}")
     else:
         lines.append(f" * no shared qubits from chunk {next_chunk_index - 1}")
     lines.append(" */")
@@ -803,21 +809,24 @@ def extract_identifiers(source: str) -> set[str]:
     return {token for token in IDENT_PATTERN.findall(source) if token not in reserved and not token.isupper()}
 
 
-def build_distributed_qasm(source: str, split_lines: set[int]) -> tuple[str, str]:
+def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list[ChunkFlow] | None = None) -> tuple[str, str]:
     lines = normalize_lines(source)
     dqc_source = add_split_markers(lines, split_lines)
-    chunks: list[list[str]] = [[]]
-    for line_no, line in enumerate(lines, start=1):
-        if line_no in split_lines:
-            chunks.append([])
-        chunks[-1].append(line)
+
+    if chunk_flows is None:
+        chunk_texts = split_dqc_chunks(dqc_source)
+        chunk_flows = compute_chunk_flows(chunk_texts, source)
+
     generated: list[str] = []
+    split_lines_sorted = sorted(split_lines)
     split_idx = 0
     for line_no, line in enumerate(lines, start=1):
-        if split_idx < len(split_lines) and line_no in split_lines:
-            current = "\n".join(chunks[split_idx])
-            nxt = "\n".join(chunks[split_idx + 1]) if split_idx + 1 < len(chunks) else ""
-            generated.extend(split_generated_teleportations(current, nxt, split_idx + 2))
+        if split_idx < len(split_lines_sorted) and line_no == split_lines_sorted[split_idx]:
+            next_chunk_index = split_idx + 2
+            incoming_sources: dict[str, set[int]] = {}
+            if 1 <= next_chunk_index <= len(chunk_flows):
+                incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
+            generated.extend(split_generated_teleportations(next_chunk_index, incoming_sources))
             split_idx += 1
         generated.append(line)
     dqc_qasm = "\n".join(generated)
@@ -1484,11 +1493,12 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
             elif rule_id == 8:
                 rewritten = rewrite_uint_to_int(rewritten, True, spans)
     rewritten_source = "\n".join(rewritten)
-    dqc_source, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines)
-    apply_rule_6 = 6 in active_rule_ids
-    display_rewritten_source = dqc_qasm if split_lines and apply_rule_6 else rewritten_source
+    dqc_source = add_split_markers(normalize_lines(rewritten_source), split_lines)
     chunk_texts = split_dqc_chunks(dqc_source)
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source)
+    _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows)
+    apply_rule_6 = 6 in active_rule_ids
+    display_rewritten_source = dqc_qasm if split_lines and apply_rule_6 else rewritten_source
     chunk_graph = build_chunk_dependency_graph(chunk_flows)
     parse_tree = None
     issues: list[RewriteSpan] = []

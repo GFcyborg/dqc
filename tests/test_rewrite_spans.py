@@ -320,6 +320,38 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIsNotNone(result.chunk_graph)
         self.assertTrue(result.chunk_graph.has_edge(1, 2))
 
+    def test_rule6_teleport_comments_match_chunk_flow_dependencies(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[1] q;",
+            "qubit[1] anc;",
+            "h q[0];",
+            "x anc[0];",
+            "x q[0];",
+        ])
+        split_before_lines = {6, 7}
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, True) for rule in DEFAULT_RULES if rule.rule_id != 0]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertEqual(len(result.chunk_flows), 3)
+        chunk2 = result.chunk_flows[1]
+        chunk3 = result.chunk_flows[2]
+        self.assertIn("anc", chunk2.incoming_sources)
+        self.assertIn(1, chunk2.incoming_sources["anc"])
+        self.assertIn("q", chunk3.incoming_sources)
+        self.assertIn(1, chunk3.incoming_sources["q"])
+
+        rewritten = result.rewritten_source
+        self.assertIn("/* Teleporting qubits into chunk 2:", rewritten)
+        self.assertIn("* anc from chunk 1", rewritten)
+        self.assertIn("/* Teleporting qubits into chunk 3:", rewritten)
+        self.assertIn("* q from chunk 1", rewritten)
+
+        self.assertTrue(result.chunk_graph.has_edge(1, 2))
+        self.assertTrue(result.chunk_graph.has_edge(1, 3))
+
 
 if __name__ == "__main__":
     unittest.main()

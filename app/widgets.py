@@ -872,6 +872,7 @@ class ChunkDagView(QGraphicsView):
         self._cached_font = QFont("DejaVu Sans", 10)
         self._reflow_in_progress = False
         self._last_reflow_viewport_size: QSize | None = None
+        self._manual_chunk_positions: dict[int, QPointF] = {}
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -891,6 +892,8 @@ class ChunkDagView(QGraphicsView):
         self._render_cached_flows()
 
     def set_flows(self, flows: list[Any], font: QFont) -> None:
+        if len(flows) != len(self._cached_flows):
+            self._manual_chunk_positions = {}
         self._cached_flows = list(flows)
         self._cached_font = QFont(font)
         self._last_reflow_viewport_size = self.viewport().size()
@@ -1036,6 +1039,10 @@ class ChunkDagView(QGraphicsView):
             jitter = ((vertical_seed / 1000.0) - 0.5) * min(18.0, max(6.0, slot_span * 0.35))
             y = max(usable_top, min(usable_bottom - spec["node_h"], anchor_y + jitter))
             x = x_by_index[index]
+            stored_pos = self._manual_chunk_positions.get(index)
+            if stored_pos is not None:
+                x = float(stored_pos.x())
+                y = float(stored_pos.y())
 
             group = _DraggableChunkGroup(None)
             scene.addItem(group)
@@ -1146,8 +1153,13 @@ class ChunkDagView(QGraphicsView):
                 )
                 placed_label_rects.append(rect)
 
-        for node in node_items.values():
-            node["group"].set_move_callback(_update_chunk_edges)
+        def _on_chunk_moved(index: int, group: QGraphicsItemGroup) -> None:
+            self._manual_chunk_positions[index] = QPointF(group.pos())
+            _update_chunk_edges()
+
+        for index, node in node_items.items():
+            group = node["group"]
+            group.set_move_callback(lambda idx=index, grp=group: _on_chunk_moved(idx, grp))
         _update_chunk_edges()
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-20, -20, 20, 20))
