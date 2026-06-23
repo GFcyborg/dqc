@@ -117,6 +117,31 @@ def collect_multi_qubit_interactions(circuit: Any) -> tuple[list[Any], dict[tupl
     return qubits, interactions
 
 
+def _place_edge_label_with_spacing(
+    label_item,
+    scene: QGraphicsScene,
+    anchor_x: float,
+    anchor_y: float,
+    normal_x: float,
+    normal_y: float,
+    existing_rects: list[QRectF],
+    step: float = 14.0,
+    max_attempts: int = 12,
+) -> QRectF:
+    base_rect = label_item.boundingRect().adjusted(-6, -4, 6, 4)
+    for attempt in range(max_attempts):
+        sign = -1.0 if attempt % 2 else 1.0
+        magnitude = step + (attempt // 2) * step
+        x = anchor_x + normal_x * magnitude * sign - base_rect.width() / 2.0
+        y = anchor_y + normal_y * magnitude * sign - base_rect.height() / 2.0
+        label_item.setPos(x, y)
+        rect = label_item.sceneBoundingRect().adjusted(-2, -2, 2, 2)
+        if not any(rect.intersects(other) for other in existing_rects):
+            return rect
+    label_item.setPos(anchor_x - base_rect.width() / 2.0, anchor_y - base_rect.height() / 2.0)
+    return label_item.sceneBoundingRect().adjusted(-2, -2, 2, 2)
+
+
 class ZoomableView(QGraphicsView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1196,11 +1221,11 @@ class MultiQubitInteractionView(QiskitDagView):
 
         edge_font = QFont(font)
         if edge_font.pointSizeF() > 0:
-            edge_font.setPointSizeF(max(11.0, edge_font.pointSizeF()))
+            edge_font.setPointSizeF(max(8.0, edge_font.pointSizeF() - 3.0))
         elif edge_font.pointSize() > 0:
-            edge_font.setPointSize(max(11, edge_font.pointSize()))
+            edge_font.setPointSize(max(8, edge_font.pointSize() - 3))
         else:
-            edge_font.setPointSize(11)
+            edge_font.setPointSize(8)
 
         center_x = 0.0
         center_y = 0.0
@@ -1225,7 +1250,9 @@ class MultiQubitInteractionView(QiskitDagView):
             node.setZValue(3)
 
             label = scene.addSimpleText(_wire_label(qubit))
-            label.setFont(node_font)
+            qubit_font = QFont(node_font)
+            qubit_font.setBold(True)
+            label.setFont(qubit_font)
             label.setBrush(QBrush(QColor("#1f5f2d")))
             label_rect = label.boundingRect()
             label.setPos(x - label_rect.width() / 2, y + node_radius + 4.0)
@@ -1234,8 +1261,9 @@ class MultiQubitInteractionView(QiskitDagView):
         max_count = max(int(edge["count"]) for edge in interactions.values())
         edge_base_color = QColor("#2b8a3e")
         edge_base_color.setAlpha(120)
+        placed_label_rects: list[QRectF] = []
 
-        for (left_index, right_index), edge in sorted(interactions.items()):
+        for edge_order, ((left_index, right_index), edge) in enumerate(sorted(interactions.items())):
             qubit_left = qubits[left_index]
             qubit_right = qubits[right_index]
             start_x, start_y = node_positions[qubit_left]
@@ -1253,15 +1281,35 @@ class MultiQubitInteractionView(QiskitDagView):
 
             line = QGraphicsLineItem(start_x, start_y, end_x, end_y)
             line.setPen(edge_pen)
+            label_text = f"{count}x({gate_text})" if gate_text else f"{count}x"
+            line.setToolTip(label_text)
             scene.addItem(line)
 
-            label = scene.addSimpleText(f"{count}x\n{gate_text}" if gate_text else f"{count}x")
+            label = scene.addSimpleText(label_text)
             label.setFont(edge_font)
             label.setBrush(QBrush(edge_base_color))
-            label_rect = label.boundingRect().adjusted(-6, -4, 6, 4)
-            midpoint_x = (start_x + end_x) / 2.0
-            midpoint_y = (start_y + end_y) / 2.0
-            label.setPos(midpoint_x - label_rect.width() / 2.0, midpoint_y - label_rect.height() / 2.0)
+            line_dx = end_x - start_x
+            line_dy = end_y - start_y
+            length = math.hypot(line_dx, line_dy) or 1.0
+            normal_x = -line_dy / length
+            normal_y = line_dx / length
+            side = -1.0 if edge_order % 2 else 1.0
+            anchor_fraction = 0.16 if edge_order % 2 == 0 else 0.84
+            anchor_x = start_x + line_dx * anchor_fraction
+            anchor_y = start_y + line_dy * anchor_fraction
+            offset = 10.0 + min(24.0, length * 0.05)
+            anchor_x += normal_x * offset * side
+            anchor_y += normal_y * offset * side
+            rect = _place_edge_label_with_spacing(
+                label,
+                scene,
+                anchor_x,
+                anchor_y,
+                normal_x,
+                normal_y,
+                placed_label_rects,
+            )
+            placed_label_rects.append(rect)
             label.setZValue(5)
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-30, -30, 30, 30))

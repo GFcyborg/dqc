@@ -605,15 +605,20 @@ Red code has still 3 lines of description in the Color Legend: fix it.
 The qubit labels of the DAG should be in bold and colored with the same green used in the qubit interaction graph.
 2026.06.22-13.43
 ---------------------------------------------
-
+The qubit labels of the qubits interaction graph should be in bold, like the qubits of the DAG.
+Also: find a way to avoid overlapping of the edge labels (in the qubits interaction graph).
+2026.06.23-10.47
+---------------------------------------------
+the qubits interaction graph is still too messy: the edge labels should be smaller and more far away from the graph center (=closer to one of their 2 ends).
+2026.06.23-10.55
+---------------------------------------------
+the qubits interaction graph is still too messy: the edge labels should be one-liners, i.e. the prefix stating the multiplier (e.g. "2x") should be on the same line as the gates list (e.g. "majority, unmaj"). The resulting labels should look like this example: 2x(majority, unmaj).
+Also: each edge label should be closer to its edge (eventually also overlapping it). 
+Also: if possibile, add a mousover tooltip to the edges, showing their edge labels.
+2026.06.23-11.04
+---------------------------------------------
 
 ================ TODO:
-
-- all the lines/edges of the DAG which are purely qubit-related (no classical bits involved, e.g. no measurements) should be in the same green color used for the Qubit interaction graph;
-Am I missing anything (about colors)?
-
-move rule #6 (split teleport comments) up ...
+fix qubits/vars export/import analysis --> teleport comments
 
 better uint rewrite rule
-
-fix qubits/vars export/import analysis --> teleport comments
