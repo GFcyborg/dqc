@@ -12,10 +12,15 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap,
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
+    QGraphicsItem,
+    QGraphicsEllipseItem,
+    QGraphicsItemGroup,
     QGraphicsLineItem,
     QGraphicsPolygonItem,
     QGraphicsPixmapItem,
+    QGraphicsRectItem,
     QGraphicsScene,
+    QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
@@ -140,6 +145,24 @@ def _place_edge_label_with_spacing(
             return rect
     label_item.setPos(anchor_x - base_rect.width() / 2.0, anchor_y - base_rect.height() / 2.0)
     return label_item.sceneBoundingRect().adjusted(-2, -2, 2, 2)
+
+
+class _DraggableChunkGroup(QGraphicsItemGroup):
+    def __init__(self, on_moved: Callable[[], None] | None = None) -> None:
+        super().__init__()
+        self._on_moved = on_moved
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+
+    def set_move_callback(self, callback: Callable[[], None] | None) -> None:
+        self._on_moved = callback
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        result = super().itemChange(change, value)
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and callable(self._on_moved):
+            self._on_moved()
+        return result
 
 
 class ZoomableView(QGraphicsView):
@@ -845,15 +868,43 @@ class ChunkDagView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.setBackgroundBrush(QColor("#f8fbf7"))
         self.setStyleSheet("border: 1px solid #d0d0d0;")
+        self._cached_flows: list[Any] = []
+        self._cached_font = QFont("DejaVu Sans", 10)
+        self._reflow_in_progress = False
+        self._last_reflow_viewport_size: QSize | None = None
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not self._cached_flows or self._reflow_in_progress:
+            return
+        current = self.viewport().size()
+        if self._last_reflow_viewport_size is None:
+            self._last_reflow_viewport_size = current
+            self._render_cached_flows()
+            return
+        delta_w = abs(current.width() - self._last_reflow_viewport_size.width())
+        delta_h = abs(current.height() - self._last_reflow_viewport_size.height())
+        # Ignore tiny viewport jitter (often caused by scrollbar appearance) to keep layout stable.
+        if max(delta_w, delta_h) < 24:
+            return
+        self._last_reflow_viewport_size = current
+        self._render_cached_flows()
 
     def set_flows(self, flows: list[Any], font: QFont) -> None:
+        self._cached_flows = list(flows)
+        self._cached_font = QFont(font)
+        self._last_reflow_viewport_size = self.viewport().size()
+        self._render_cached_flows()
+
+    def _render_cached_flows(self) -> None:
         scene = self.scene()
         if scene is None:
             scene = QGraphicsScene(self)
             self.setScene(scene)
         scene.clear()
 
-        node_font = QFont(font)
+        self._reflow_in_progress = True
+        node_font = QFont(self._cached_font)
         if node_font.pointSizeF() > 0:
             node_font.setPointSizeF(max(7.0, node_font.pointSizeF() - 2.0))
         elif node_font.pointSize() > 0:
@@ -861,44 +912,160 @@ class ChunkDagView(QGraphicsView):
         else:
             node_font.setPointSize(8)
 
+        flows = self._cached_flows
+
         if not flows:
             empty = scene.addSimpleText("No dependency DAG available")
             empty.setFont(node_font)
             empty.setBrush(QColor("#555555"))
             scene.setSceneRect(empty.boundingRect().adjusted(-10, -10, 10, 10))
+            self._reflow_in_progress = False
             return
 
-        node_w = 320.0
-        node_h = 72.0
-        gap = 60.0
+        base_gap = 44.0
+        min_gap = 16.0
         left = 20.0
         top = 20.0
 
-        node_items: dict[int, tuple[Any, float, float]] = {}
+        metrics = QFontMetricsF(node_font)
+        line_h = metrics.height()
+        inner_pad_x = 10.0
+        top_pad = 6.0
+        row_gap = 4.0
+        bottom_pad = 6.0
+        max_text_w = 230.0
+
+        node_specs: list[dict[str, Any]] = []
         for index, flow in enumerate(flows, 1):
-            y = top + (index - 1) * (node_h + gap)
-            rect = scene.addRect(left, y, node_w, node_h, QColor("#6d8f6a"), QColor("#eef6ec"))
-            title = scene.addSimpleText(getattr(flow, "title", f"Chunk {index}"))
+            title_text = getattr(flow, "title", f"Chunk {index}")
+            io_text = f"in: {len(getattr(flow, 'incoming_sources', {}))}   out: {len(getattr(flow, 'outgoing_targets', {}))}"
+            summary_text = ", ".join(sorted(getattr(flow, "defined", set()))) if getattr(flow, "defined", None) else "none"
+            summary_full = "declared/used: " + summary_text
+
+            wrap_width = max(24, int(max_text_w / max(6.0, metrics.averageCharWidth())))
+            summary_lines = textwrap.wrap(summary_full, width=wrap_width, break_long_words=True, break_on_hyphens=False) or [summary_full]
+
+            text_w = max(
+                metrics.horizontalAdvance(title_text),
+                metrics.horizontalAdvance(io_text),
+                *(metrics.horizontalAdvance(line) for line in summary_lines),
+            )
+            node_w = max(170.0, min(max_text_w + 2 * inner_pad_x, text_w + 2 * inner_pad_x))
+            node_h = top_pad + line_h + row_gap + line_h + row_gap + (len(summary_lines) * line_h) + bottom_pad
+
+            title_seed = sum((pos + 1) * ord(ch) for pos, ch in enumerate(title_text))
+            node_specs.append(
+                {
+                    "index": index,
+                    "title_text": title_text,
+                    "io_text": io_text,
+                    "summary_lines": summary_lines,
+                    "node_w": node_w,
+                    "node_h": node_h,
+                    "seed": title_seed,
+                }
+            )
+
+        viewport_h = float(max(120, self.viewport().height()))
+        viewport_w = float(max(240, self.viewport().width()))
+        spread_margin_y = max(6.0, min(24.0, viewport_h * 0.06))
+        spread_margin_x = max(26.0, min(110.0, viewport_w * 0.14))
+        max_node_h = max(spec["node_h"] for spec in node_specs)
+        usable_top = top + spread_margin_y
+        usable_bottom = max(usable_top + max_node_h, viewport_h - (20.0 + spread_margin_y))
+        usable_span = max(0.0, usable_bottom - usable_top - max_node_h)
+        slot_span = usable_span / max(1, len(node_specs) - 1)
+
+        spread_order = sorted(node_specs, key=lambda spec: ((spec["seed"] % 7919), spec["index"]))
+        rank_by_index = {spec["index"]: rank for rank, spec in enumerate(spread_order)}
+
+        usable_left = left + spread_margin_x
+        usable_right = max(usable_left, viewport_w - (20.0 + spread_margin_x))
+        available_w = max(0.0, usable_right - usable_left)
+
+        x_by_index: dict[int, float] = {}
+        if len(node_specs) <= 1:
+            only = node_specs[0]
+            x_by_index[only["index"]] = usable_left + max(0.0, (available_w - only["node_w"]) / 2.0)
+        else:
+            jitter_scale = min(20.0, max(8.0, available_w / max(6.0, float(len(node_specs) * 6))))
+            for slot, spec in enumerate(node_specs):
+                anchor_x = usable_left + (available_w * slot / float(len(node_specs) - 1))
+                jitter = (((spec["seed"] % 1000) / 1000.0) - 0.5) * jitter_scale
+                x_by_index[spec["index"]] = anchor_x - (spec["node_w"] / 2.0) + jitter
+
+            # Keep chunk order and avoid overlaps with a forward pass.
+            prev_right = None
+            for spec in node_specs:
+                idx = spec["index"]
+                x = x_by_index[idx]
+                if prev_right is None:
+                    x = max(usable_left, x)
+                else:
+                    x = max(prev_right + min_gap, x)
+                x_by_index[idx] = x
+                prev_right = x + spec["node_w"]
+
+            # Pull right-to-left so the rightmost chunk stays near the viewport edge.
+            next_left = usable_right
+            for spec in reversed(node_specs):
+                idx = spec["index"]
+                x = x_by_index[idx]
+                max_x = next_left - spec["node_w"]
+                x = min(x, max_x)
+                x_by_index[idx] = x
+                next_left = x - min_gap
+
+            # If constraints force nodes left of view, shift the whole chain right.
+            leftmost = min(x_by_index[spec["index"]] for spec in node_specs)
+            if leftmost < usable_left:
+                shift = usable_left - leftmost
+                for spec in node_specs:
+                    idx = spec["index"]
+                    x_by_index[idx] = x_by_index[idx] + shift
+
+        node_items: dict[int, dict[str, Any]] = {}
+        for spec in node_specs:
+            index = spec["index"]
+            rank = rank_by_index[index]
+            if len(node_specs) <= 1:
+                anchor_y = usable_top + (usable_span / 2.0)
+            else:
+                anchor_y = usable_top + rank * slot_span
+            vertical_seed = (spec["seed"] * 37 + index * 101) % 1000
+            jitter = ((vertical_seed / 1000.0) - 0.5) * min(18.0, max(6.0, slot_span * 0.35))
+            y = max(usable_top, min(usable_bottom - spec["node_h"], anchor_y + jitter))
+            x = x_by_index[index]
+
+            group = _DraggableChunkGroup(None)
+            scene.addItem(group)
+            group.setPos(x, y)
+
+            rect = QGraphicsRectItem(0.0, 0.0, spec["node_w"], spec["node_h"], group)
+            rect.setPen(QPen(QColor("#6d8f6a")))
+            rect.setBrush(QBrush(QColor("#eef6ec")))
+
+            title = QGraphicsSimpleTextItem(spec["title_text"], group)
             title.setFont(node_font)
             title.setBrush(QColor("#223322"))
-            title.setPos(left + 10, y + 6)
+            title.setPos(inner_pad_x, top_pad)
 
-            incoming = scene.addSimpleText(f"in: {len(getattr(flow, 'incoming_sources', {}))}")
-            incoming.setFont(node_font)
-            incoming.setBrush(QColor("#345"))
-            incoming.setPos(left + 10, y + 30)
+            io = QGraphicsSimpleTextItem(spec["io_text"], group)
+            io.setFont(node_font)
+            io.setBrush(QColor("#345"))
+            io.setPos(inner_pad_x, top_pad + line_h + row_gap)
 
-            outgoing = scene.addSimpleText(f"out: {len(getattr(flow, 'outgoing_targets', {}))}")
-            outgoing.setFont(node_font)
-            outgoing.setBrush(QColor("#345"))
-            outgoing.setPos(left + 110, y + 30)
-
-            summary = scene.addSimpleText("declared/used: " + (", ".join(sorted(getattr(flow, "defined", set()))) if getattr(flow, "defined", None) else "none"))
+            summary = QGraphicsSimpleTextItem("\n".join(spec["summary_lines"]), group)
             summary.setFont(node_font)
             summary.setBrush(QColor("#556"))
-            summary.setPos(left + 10, y + 50)
+            summary.setPos(inner_pad_x, top_pad + (2 * line_h) + (2 * row_gap))
 
-            node_items[index] = (rect, left, y)
+            group.setToolTip(spec["title_text"])
+            node_items[index] = {
+                "group": group,
+                "w": spec["node_w"],
+                "h": spec["node_h"],
+            }
 
         edge_labels: dict[tuple[int, int], list[str]] = {}
         for index, flow in enumerate(flows, 1):
@@ -907,27 +1074,83 @@ class ChunkDagView(QGraphicsView):
                     edge_labels.setdefault((source, index), []).append(name)
 
         edge_color = QColor("#2f6fff")
-        for (source, dest), labels in sorted(edge_labels.items()):
+        edge_entries: list[dict[str, Any]] = []
+        for edge_order, ((source, dest), labels) in enumerate(sorted(edge_labels.items())):
             if source not in node_items or dest not in node_items:
                 continue
-            _, x1, y1 = node_items[source]
-            _, x2, y2 = node_items[dest]
-            start_x = x1 + node_w
-            start_y = y1 + node_h / 2
-            end_x = x2
-            end_y = y2 + node_h / 2
-            line = scene.addLine(start_x, start_y, end_x, end_y, QPen(edge_color))
-            label = scene.addSimpleText(", ".join(sorted(labels)))
+            line = scene.addLine(0.0, 0.0, 0.0, 0.0, QPen(edge_color))
+            label_text = ", ".join(sorted(labels))
+            line.setToolTip(label_text)
+            label = scene.addSimpleText(label_text)
             label.setFont(node_font)
             label.setBrush(edge_color)
-            label_rect = label.boundingRect().adjusted(-6, -3, 6, 3)
-            midpoint_x = (start_x + end_x) / 2
-            midpoint_y = (start_y + end_y) / 2
-            label_x = midpoint_x - label_rect.width() / 2
-            label_y = midpoint_y - label_rect.height() / 2
-            label.setPos(label_x, label_y)
+            edge_entries.append(
+                {
+                    "order": edge_order,
+                    "source": source,
+                    "dest": dest,
+                    "line": line,
+                    "label": label,
+                    "label_text": label_text,
+                }
+            )
+
+        def _update_chunk_edges() -> None:
+            placed_label_rects: list[QRectF] = []
+            for entry in edge_entries:
+                source = entry["source"]
+                dest = entry["dest"]
+                source_item = node_items[source]
+                dest_item = node_items[dest]
+                src_group = source_item["group"]
+                dst_group = dest_item["group"]
+                src_w = float(source_item["w"])
+                src_h = float(source_item["h"])
+                dst_h = float(dest_item["h"])
+
+                src_pos = src_group.pos()
+                dst_pos = dst_group.pos()
+                start_x = src_pos.x() + src_w
+                start_y = src_pos.y() + src_h / 2.0
+                end_x = dst_pos.x()
+                end_y = dst_pos.y() + dst_h / 2.0
+
+                line = entry["line"]
+                line.setLine(start_x, start_y, end_x, end_y)
+                line.setToolTip(entry["label_text"])
+
+                label = entry["label"]
+                line_dx = end_x - start_x
+                line_dy = end_y - start_y
+                line_len = math.hypot(line_dx, line_dy) or 1.0
+                normal_x = -line_dy / line_len
+                normal_y = line_dx / line_len
+                side = -1.0 if entry["order"] % 2 else 1.0
+                anchor_fraction = 0.20 if entry["order"] % 2 == 0 else 0.80
+                anchor_x = start_x + line_dx * anchor_fraction
+                anchor_y = start_y + line_dy * anchor_fraction
+                offset = 8.0 + min(14.0, line_len * 0.03)
+                anchor_x += normal_x * offset * side
+                anchor_y += normal_y * offset * side
+                rect = _place_edge_label_with_spacing(
+                    label,
+                    scene,
+                    anchor_x,
+                    anchor_y,
+                    normal_x,
+                    normal_y,
+                    placed_label_rects,
+                    step=11.0,
+                    max_attempts=10,
+                )
+                placed_label_rects.append(rect)
+
+        for node in node_items.values():
+            node["group"].set_move_callback(_update_chunk_edges)
+        _update_chunk_edges()
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-20, -20, 20, 20))
+        self._reflow_in_progress = False
 
 
 class QiskitDagView(QGraphicsView):
@@ -1009,7 +1232,8 @@ class QiskitDagView(QGraphicsView):
         edge_pen.setWidthF(1.4)
 
         for wire, y in wire_y.items():
-            label = scene.addSimpleText(_wire_label(wire))
+            wire_text = _wire_label(wire)
+            label = scene.addSimpleText(wire_text)
             label_font = QFont(node_font)
             if wire in qubits:
                 label_font.setBold(True)
@@ -1017,8 +1241,10 @@ class QiskitDagView(QGraphicsView):
             else:
                 label.setBrush(QBrush(QColor("#5b6d8a")))
             label.setFont(label_font)
+            label.setToolTip(wire_text)
             label.setPos(10, y - label.boundingRect().height() / 2)
-            scene.addLine(left - 8, y, scene_right, y, QPen(QColor("#d7deea")))
+            wire_line = scene.addLine(left - 8, y, scene_right, y, QPen(QColor("#d7deea")))
+            wire_line.setToolTip(wire_text)
 
         last_x: dict[Any, float] = {wire: left - 8 for wire in wires}
         for index, node in enumerate(op_nodes):
@@ -1232,43 +1458,37 @@ class MultiQubitInteractionView(QiskitDagView):
         radius = max(140.0, 42.0 * len(qubits))
         node_radius = 14.0
 
-        node_positions: dict[Any, tuple[float, float]] = {}
+        node_items: dict[int, dict[str, Any]] = {}
         for index, qubit in enumerate(qubits):
             angle = (-math.pi / 2.0) + (2.0 * math.pi * index / max(1, len(qubits)))
             x = center_x + radius * math.cos(angle)
             y = center_y + radius * math.sin(angle)
-            node_positions[qubit] = (x, y)
+            group = _DraggableChunkGroup(None)
+            scene.addItem(group)
+            group.setPos(x, y)
 
-            node = scene.addEllipse(
-                x - node_radius,
-                y - node_radius,
-                node_radius * 2.0,
-                node_radius * 2.0,
-                QPen(QColor("#2b8a3e")),
-                QBrush(QColor("#e7f7ea")),
-            )
+            node = QGraphicsEllipseItem(-node_radius, -node_radius, node_radius * 2.0, node_radius * 2.0, group)
+            node.setPen(QPen(QColor("#2b8a3e")))
+            node.setBrush(QBrush(QColor("#e7f7ea")))
             node.setZValue(3)
 
-            label = scene.addSimpleText(_wire_label(qubit))
+            label = QGraphicsSimpleTextItem(_wire_label(qubit), group)
             qubit_font = QFont(node_font)
             qubit_font.setBold(True)
             label.setFont(qubit_font)
             label.setBrush(QBrush(QColor("#1f5f2d")))
             label_rect = label.boundingRect()
-            label.setPos(x - label_rect.width() / 2, y + node_radius + 4.0)
+            label.setPos(-label_rect.width() / 2.0, node_radius + 4.0)
             label.setZValue(4)
+
+            group.setToolTip(_wire_label(qubit))
+            node_items[index] = {"group": group}
 
         max_count = max(int(edge["count"]) for edge in interactions.values())
         edge_base_color = QColor("#2b8a3e")
         edge_base_color.setAlpha(120)
-        placed_label_rects: list[QRectF] = []
-
+        edge_entries: list[dict[str, Any]] = []
         for edge_order, ((left_index, right_index), edge) in enumerate(sorted(interactions.items())):
-            qubit_left = qubits[left_index]
-            qubit_right = qubits[right_index]
-            start_x, start_y = node_positions[qubit_left]
-            end_x, end_y = node_positions[qubit_right]
-
             count = int(edge["count"])
             gates = sorted(edge["gates"])
             gate_text = ", ".join(gates[:3])
@@ -1279,7 +1499,7 @@ class MultiQubitInteractionView(QiskitDagView):
             edge_pen = QPen(edge_base_color)
             edge_pen.setWidthF(weight)
 
-            line = QGraphicsLineItem(start_x, start_y, end_x, end_y)
+            line = QGraphicsLineItem(0.0, 0.0, 0.0, 0.0)
             line.setPen(edge_pen)
             label_text = f"{count}x({gate_text})" if gate_text else f"{count}x"
             line.setToolTip(label_text)
@@ -1288,29 +1508,64 @@ class MultiQubitInteractionView(QiskitDagView):
             label = scene.addSimpleText(label_text)
             label.setFont(edge_font)
             label.setBrush(QBrush(edge_base_color))
-            line_dx = end_x - start_x
-            line_dy = end_y - start_y
-            length = math.hypot(line_dx, line_dy) or 1.0
-            normal_x = -line_dy / length
-            normal_y = line_dx / length
-            side = -1.0 if edge_order % 2 else 1.0
-            anchor_fraction = 0.16 if edge_order % 2 == 0 else 0.84
-            anchor_x = start_x + line_dx * anchor_fraction
-            anchor_y = start_y + line_dy * anchor_fraction
-            offset = 10.0 + min(24.0, length * 0.05)
-            anchor_x += normal_x * offset * side
-            anchor_y += normal_y * offset * side
-            rect = _place_edge_label_with_spacing(
-                label,
-                scene,
-                anchor_x,
-                anchor_y,
-                normal_x,
-                normal_y,
-                placed_label_rects,
-            )
-            placed_label_rects.append(rect)
+            line.setZValue(1)
             label.setZValue(5)
+
+            edge_entries.append(
+                {
+                    "order": edge_order,
+                    "left": left_index,
+                    "right": right_index,
+                    "line": line,
+                    "label": label,
+                    "label_text": label_text,
+                }
+            )
+
+        def _update_interaction_edges() -> None:
+            placed_label_rects: list[QRectF] = []
+            for entry in edge_entries:
+                left_group = node_items[entry["left"]]["group"]
+                right_group = node_items[entry["right"]]["group"]
+
+                left_pos = left_group.pos()
+                right_pos = right_group.pos()
+                start_x = left_pos.x()
+                start_y = left_pos.y()
+                end_x = right_pos.x()
+                end_y = right_pos.y()
+
+                line = entry["line"]
+                line.setLine(start_x, start_y, end_x, end_y)
+                line.setToolTip(entry["label_text"])
+
+                label = entry["label"]
+                line_dx = end_x - start_x
+                line_dy = end_y - start_y
+                length = math.hypot(line_dx, line_dy) or 1.0
+                normal_x = -line_dy / length
+                normal_y = line_dx / length
+                side = -1.0 if entry["order"] % 2 else 1.0
+                anchor_fraction = 0.16 if entry["order"] % 2 == 0 else 0.84
+                anchor_x = start_x + line_dx * anchor_fraction
+                anchor_y = start_y + line_dy * anchor_fraction
+                offset = 10.0 + min(24.0, length * 0.05)
+                anchor_x += normal_x * offset * side
+                anchor_y += normal_y * offset * side
+                rect = _place_edge_label_with_spacing(
+                    label,
+                    scene,
+                    anchor_x,
+                    anchor_y,
+                    normal_x,
+                    normal_y,
+                    placed_label_rects,
+                )
+                placed_label_rects.append(rect)
+
+        for node in node_items.values():
+            node["group"].set_move_callback(_update_interaction_edges)
+        _update_interaction_edges()
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-30, -30, 30, 30))
         self._user_interacted = False

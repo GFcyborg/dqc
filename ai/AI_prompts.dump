@@ -617,6 +617,38 @@ Also: each edge label should be closer to its edge (eventually also overlapping 
 Also: if possibile, add a mousover tooltip to the edges, showing their edge labels.
 2026.06.23-11.04
 ---------------------------------------------
+Also the DAG horizontal wires (= qubits or bits) should get a mouseover tooltip, showing their labels.
+2026.06.23-11.18
+---------------------------------------------
+Chunk dependencies graph should develop horizontally, instead of stacking the chunks vertically; to avoid excessive horizontal size, each chunk size should be minimized (=autofit to contents).
+2026.06.23-11.22
+---------------------------------------------
+In order to minimize overlapping of the edge labels in the Chunk dependencies graph, let's introduce a small (random?) vertical offset of each chunk position, so that the chunks spread vertically as much as possible (but keeping inside the visible area). If the user resizes/enlarges the Graphs area (by dragging the divider), the vertical offset of the chunks is dinamically recalculated to maximize the spreading.
+2026.06.23-11.31
+---------------------------------------------
+in the Chunk dependencies graph, let's also maximize the horizontal spread of the chunks (just like you did for the vertical spread).
+2026.06.23-11.41
+---------------------------------------------
+this last change (in the Chunk dependencies graph) has made the graph unstable (it gets slightly redrawn every now and then), and its zoom does not work anymore. Also: add some margin in it (i.e. reduce the spreading a little bit).
+2026.06.23-12.04
+---------------------------------------------
+Chunk dependencies graph is still too messy: let's use the same anti-overlapping strategy that we used in Qubit interaction graph's edge labels (uncenter/move each label toward one edge-end). Also: move each chunk box vertically by a little random offset, so they don't align diagonally. Also: reduce vertical margin and increase horizontal margin.
+2026.06.23-12.15
+---------------------------------------------
+Chunk dependencies graph is still too messy: can we make the chunk boxes individually draggable? (this would solve the overlapping of edge labels)
+2026.06.23-12.20
+---------------------------------------------
+Some of the last changes has introduced a bug in the app: when the user loads a parametric file (regardless of it being *.qasm or *.dqc), the GUI shows the param input dialog twice. e.g: qiskit-example.dqc
+2026.06.23-12.30
+---------------------------------------------
+If you want, I can also add a focused regression test for this exact GUI prompt behavior (load parametric file should prompt once).
+
+yes, do it.
+2026.06.23-12.33
+---------------------------------------------
+The Qubit interaction graph's nodes should be draggable (just like the chunk boxes do, in the Chunks dependencies graph).
+2026.06.23-12.40
+---------------------------------------------
 
 ================ TODO:
 fix qubits/vars export/import analysis --> teleport comments

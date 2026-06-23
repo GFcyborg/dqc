@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
         self._find_matches: list[tuple[int, QWidget, QTextCursor]] = []
         self._find_index = -1
         self._parameter_prompt_pending = False
+        self._parameter_prompt_open = False
         # Initialize rules: bypass (rule 0) disabled by default, all others enabled
         self.rules = [
             RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0)
@@ -718,15 +719,21 @@ class MainWindow(QMainWindow):
         self._refresh_timer.start(250)
 
     def _prompt_for_parameters(self, force: bool = False) -> None:
-        self._parameter_prompt_pending = False
-        analysis_source = self._split_save_source()
-        required = scan_inputs(analysis_source)
-        if not required or (self.parameter_bindings and not force):
+        if self._parameter_prompt_open:
             return
-        dialog = ParameterDialog(required, self)
-        if dialog.exec() == QDialog.Accepted:
-            self.parameter_bindings = dialog.values()
-            self.refresh()
+        self._parameter_prompt_open = True
+        try:
+            analysis_source = self._split_save_source()
+            required = scan_inputs(analysis_source)
+            if not required or (self.parameter_bindings and not force):
+                return
+            dialog = ParameterDialog(required, self)
+            if dialog.exec() == QDialog.Accepted:
+                self.parameter_bindings = dialog.values()
+                self.refresh()
+        finally:
+            self._parameter_prompt_open = False
+            self._parameter_prompt_pending = False
 
     def _strip_pragmas_with_mapping(self, source_text: str) -> tuple[str, dict[int, int], dict[int, int]]:
         stripped_lines: list[str] = []
@@ -769,7 +776,9 @@ class MainWindow(QMainWindow):
         self.original_editor.setRewriteSpans([])
         self.original_editor.setPragmaLines(split_pragma_line_numbers(self.current_source))
         self.rule_panel.set_states({rule.rule_id for rule in self.rules if rule.enabled}, self._rule_bypass_enabled())
+        self._refresh_timer.stop()
         self._parameter_prompt_pending = False
+        self._parameter_prompt_open = False
         self._suppress_parameter_prompt = not prompt_for_parameters
         self.refresh()
         self._suppress_parameter_prompt = False
@@ -1066,7 +1075,7 @@ class MainWindow(QMainWindow):
             elif needs_parameters:
                 self._shutdown_runtime_executor()
                 self.runtime_output.setPlainText("Circuit preview ready. Enter parameter values to run the circuit.")
-                if not self._parameter_prompt_pending:
+                if not self._parameter_prompt_pending and not self._parameter_prompt_open:
                     self._parameter_prompt_pending = True
                     QTimer.singleShot(0, self._prompt_for_parameters)
             else:
