@@ -44,6 +44,77 @@ def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, 
     return item
 
 
+def _has_split_generated_barriers(source: str | None) -> bool:
+    if not source:
+        return False
+    lines = str(source).splitlines()
+    for index, line in enumerate(lines):
+        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
+            continue
+        if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
+            return True
+    return False
+
+
+def _split_generated_barrier_ordinals(source: str | None) -> set[int]:
+    if not source:
+        return set()
+    lines = str(source).splitlines()
+    ordinals: set[int] = set()
+    barrier_ordinal = 0
+    for index, line in enumerate(lines):
+        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
+            continue
+        barrier_ordinal += 1
+        if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
+            ordinals.add(barrier_ordinal)
+    return ordinals
+
+
+def _recolor_split_generated_barriers(figure: Any, split_generated_ordinals: set[int], color_hex: str = "#ca8a04") -> None:
+    if not split_generated_ordinals:
+        return
+    axes = getattr(figure, "axes", None) or []
+    if not axes:
+        return
+    ax = axes[0]
+    barrier_rects: list[Any] = []
+    for patch in getattr(ax, "patches", []):
+        if patch.__class__.__name__ != "Rectangle":
+            continue
+        alpha = getattr(patch, "get_alpha", lambda: None)()
+        if alpha is None or abs(float(alpha) - 0.6) > 1e-6:
+            continue
+        barrier_rects.append(patch)
+    if not barrier_rects:
+        return
+
+    groups: list[list[Any]] = []
+    current: list[Any] = []
+    current_x: float | None = None
+    for patch in barrier_rects:
+        bbox = patch.get_bbox()
+        x0 = float(bbox.x0)
+        if current_x is None or abs(x0 - current_x) < 1e-6:
+            current.append(patch)
+            current_x = x0 if current_x is None else current_x
+        else:
+            groups.append(current)
+            current = [patch]
+            current_x = x0
+    if current:
+        groups.append(current)
+
+    rgba = QColor(color_hex)
+    mpl_color = (rgba.redF(), rgba.greenF(), rgba.blueF(), 0.6)
+    for ordinal, group in enumerate(groups, start=1):
+        if ordinal not in split_generated_ordinals:
+            continue
+        for patch in group:
+            patch.set_facecolor(mpl_color)
+            patch.set_alpha(0.6)
+
+
 def _wrap_scene_message(text: str, width: int = 88) -> str:
     wrapped_lines: list[str] = []
     for line in str(text).splitlines() or [str(text)]:
@@ -577,6 +648,12 @@ class HtmlCodeView(QTextBrowser):
         line_index = 0
         while line_index < len(lines):
             line = lines[line_index]
+            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line) and line_index + 1 < len(lines) and lines[line_index + 1].startswith("/* Teleporting qubits into chunk "):
+                self._teleport_lines.add(line_index + 1)
+                tooltip_map.setdefault(line_index + 1, []).append(teleport_tooltip)
+                visible_lines.add(line_index + 1)
+                line_index += 1
+                continue
             if line.startswith("/* Teleporting qubits into chunk "):
                 while line_index < len(lines):
                     self._teleport_lines.add(line_index + 1)
@@ -635,6 +712,11 @@ class HtmlCodeView(QTextBrowser):
         line_index = 0
         while line_index < len(lines):
             line = lines[line_index]
+            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line) and line_index + 1 < len(lines) and lines[line_index + 1].startswith("/* Teleporting qubits into chunk "):
+                escaped = self._html_escape(line)
+                decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
+                line_index += 1
+                continue
             if line.startswith("/* Teleporting qubits into chunk "):
                 while line_index < len(lines):
                     block_line = lines[line_index]
@@ -1792,7 +1874,7 @@ class CircuitView(QWidget):
         self.view.setScene(self._scene)
         layout.addWidget(self.view)
 
-    def show_circuit(self, circuit: Any | None) -> None:
+    def show_circuit(self, circuit: Any | None, runtime_source: str | None = None) -> None:
         self._scene.clear()
         if circuit is None:
             text = _add_selectable_scene_text(
@@ -1808,6 +1890,8 @@ class CircuitView(QWidget):
         try:
             from qiskit.visualization import circuit_drawer
 
+            split_generated_barriers = _split_generated_barrier_ordinals(runtime_source)
+
             figure = circuit_drawer(
                 circuit,
                 output="mpl",
@@ -1816,6 +1900,7 @@ class CircuitView(QWidget):
                 cregbundle=False,
                 expr_len=60,
             )
+            _recolor_split_generated_barriers(figure, split_generated_barriers)
             try:
                 figure.patch.set_facecolor("#ffffff")
             except Exception:

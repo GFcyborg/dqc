@@ -670,10 +670,23 @@ Chunk dependencies graph's zoom is not working.
 when manually editing the original code next to the pragmas (by inserting some new code right before a split pragma), the split pragmas interfere with the editing by triggering some auto-deletion of manually-inserted empty lines, or by moving the new code around (instead of respecting the insertion point) as if the pragmas wanted to keep their initial position/line-number, even if the user wants to insert some code before it. Also: the bold+underlying formatting of the split pragmas difts and gets applied to adjacent lines.
 2026.06.24-15.37
 ---------------------------------------------
-
+Currently each split pragma is translated/rewritten into a teleportation comment block (listing all dependencies of the next chunk). I also want it to inject a "barrier;" line, just before each teleportation block. Such barrier should be colored in orange, like the teleport comment.
+2026.06.24-16.16
+---------------------------------------------
+Can we color such split-generated barriers in orange in the circuit?
+2026.06.24-16.20
+---------------------------------------------
+split-generated barriers are still not orange: are you sure you can customize their color in qiskit ?
+2026.06.24-16.24
+---------------------------------------------
+now it works: split-generated barriers are orange, but pre-existing barriers (which are usually/initially colored in gray) turn orange too, as soon a split-generated barrier is found (live-inserted by the user, or by *.dqc code).
+2026.06.24-16.32
+---------------------------------------------
 
 
 ================ TODO:
+coherently with dependencies analyzed (and referred to) by the dependency graph and the teleportation comments, inject a barrier on them.
+
 inject "barrier q[0], q[1], q[2];" just before the teleportation comment
 
 better uint rewrite rule

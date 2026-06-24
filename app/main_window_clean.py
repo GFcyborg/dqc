@@ -1076,7 +1076,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.runtime_output.setPlainText("Running simulation...")
                     self._start_runtime_run(result)
-            self.circuit_view.show_circuit(result.circuit)
+            self.circuit_view.show_circuit(result.circuit, result.split_qasm)
             self.refresh_graphs()
             self._update_runtime_menu_labels()
         except Exception as exc:

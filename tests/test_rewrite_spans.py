@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 
 from pathlib import Path
@@ -65,8 +66,10 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "include \"stdgates.inc\";", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
         self.assertIn("/* Teleporting qubits into chunk 2:", dqc_qasm)
+        self.assertRegex(dqc_qasm, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
         self.assertIn("* q from chunk 1", dqc_qasm)
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
+        self.assertRegex(result.rewritten_source, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
         self.assertIn("* q from chunk 1", result.rewritten_source)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 4), 4)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 5), 4)
@@ -344,6 +347,7 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn(1, chunk3.incoming_sources["q"])
 
         rewritten = result.rewritten_source
+        self.assertGreaterEqual(len(re.findall(r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk", rewritten)), 2)
         self.assertIn("/* Teleporting qubits into chunk 2:", rewritten)
         self.assertIn("* anc from chunk 1", rewritten)
         self.assertIn("/* Teleporting qubits into chunk 3:", rewritten)

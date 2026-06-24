@@ -729,15 +729,23 @@ def add_split_markers(lines: list[str], split_lines: set[int]) -> str:
     return "\n".join(out)
 
 
-def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict[str, set[int]] | None) -> list[str]:
+def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict[str, set[int]] | None, qubit_register_names: set[str] | None = None) -> list[str]:
     incoming_sources = incoming_sources or {}
+    qubit_register_names = qubit_register_names or set()
     dependencies: list[tuple[int, str]] = []
+    barrier_targets: set[str] = set()
     for name, sources in incoming_sources.items():
+        base_name = re.sub(r"\s*\[[^\]]+\]\s*$", "", name.strip())
+        if base_name in qubit_register_names:
+            barrier_targets.add(base_name)
         for source in sources:
             dependencies.append((int(source), name))
     dependencies.sort(key=lambda item: (item[0], item[1]))
 
-    lines = [f"/* Teleporting qubits into chunk {next_chunk_index}:"]
+    if barrier_targets:
+        lines = [f"barrier {', '.join(sorted(barrier_targets))};", f"/* Teleporting qubits into chunk {next_chunk_index}:"]
+    else:
+        lines = ["barrier;", f"/* Teleporting qubits into chunk {next_chunk_index}:"]
     if dependencies:
         for source, name in dependencies:
             lines.append(f" * {name} from chunk {source}")
@@ -809,9 +817,22 @@ def extract_identifiers(source: str) -> set[str]:
     return {token for token in IDENT_PATTERN.findall(source) if token not in reserved and not token.isupper()}
 
 
+def extract_qubit_register_names(source: str) -> set[str]:
+    names: set[str] = set()
+    for line in normalize_lines(source):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        match = re.match(r"^\s*qubit(?:\[[^\]]+\])?\s+([A-Za-z_][A-Za-z0-9_]*)\b", line)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
 def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list[ChunkFlow] | None = None) -> tuple[str, str]:
     lines = normalize_lines(source)
     dqc_source = add_split_markers(lines, split_lines)
+    qubit_register_names = extract_qubit_register_names(source)
 
     if chunk_flows is None:
         chunk_texts = split_dqc_chunks(dqc_source)
@@ -826,7 +847,7 @@ def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list
             incoming_sources: dict[str, set[int]] = {}
             if 1 <= next_chunk_index <= len(chunk_flows):
                 incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
-            generated.extend(split_generated_teleportations(next_chunk_index, incoming_sources))
+            generated.extend(split_generated_teleportations(next_chunk_index, incoming_sources, qubit_register_names))
             split_idx += 1
         generated.append(line)
     dqc_qasm = "\n".join(generated)

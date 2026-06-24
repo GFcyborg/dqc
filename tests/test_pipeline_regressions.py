@@ -6,7 +6,7 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
 from app.pipeline import line_is_inside_blocking_scope, qasm_token_graph, suggest_split_points
-from app.widgets import _wire_label, collect_multi_qubit_interactions
+from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
 class PipelineRegressionTests(unittest.TestCase):
@@ -109,6 +109,49 @@ class GraphLabelRegressionTests(unittest.TestCase):
         self.assertIn((0, 1), interactions)
         self.assertEqual(interactions[(0, 1)]["count"], 2)
         self.assertEqual(interactions[(0, 1)]["gates"], {"cx", "cz"})
+
+    def test_detects_split_generated_barrier_signature(self) -> None:
+        source_with_split_generated_barrier = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "barrier;",
+                "/* Teleporting qubits into chunk 2:",
+                " * q from chunk 1",
+                " */",
+            ]
+        )
+        source_without_split_generated_barrier = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "barrier q[0];",
+                "h q[0];",
+            ]
+        )
+
+        self.assertTrue(_has_split_generated_barriers(source_with_split_generated_barrier))
+        self.assertFalse(_has_split_generated_barriers(source_without_split_generated_barrier))
+
+    def test_detects_only_split_generated_barrier_ordinals(self) -> None:
+        mixed_source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "barrier q;",
+                "h q[0];",
+                "barrier q;",
+                "/* Teleporting qubits into chunk 2:",
+                " * q from chunk 1",
+                " */",
+                "barrier q;",
+                "/* Teleporting qubits into chunk 3:",
+                " * q from chunk 2",
+                " */",
+            ]
+        )
+
+        self.assertEqual(_split_generated_barrier_ordinals(mixed_source), {2, 3})
 
 
 if __name__ == "__main__":
