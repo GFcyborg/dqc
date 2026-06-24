@@ -238,6 +238,7 @@ class _PragmaBoldHighlighter(QSyntaxHighlighter):
     def __init__(self, document: Any) -> None:
         super().__init__(document)
         self._pragma_lines: set[int] = set()
+        self._pragma_re = re.compile(r"^\s*pragma\s+dqc\.v1\.split(?:\s+id\s*=\s*[1-9][0-9]*)?\s*$", re.IGNORECASE)
         self._fmt = QTextCharFormat()
         self._fmt.setFontWeight(700)
         self._fmt.setFontUnderline(True)
@@ -248,8 +249,7 @@ class _PragmaBoldHighlighter(QSyntaxHighlighter):
             self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:  # noqa: N802
-        line_no = self.currentBlock().blockNumber() + 1
-        if line_no in self._pragma_lines and text.strip():
+        if self._pragma_re.match(text or ""):
             self.setFormat(0, len(text), self._fmt)
 
 
@@ -488,7 +488,7 @@ class CodeEditor(QPlainTextEdit):
         super().leaveEvent(event)
 
     def _actual_pragma_lines(self) -> set[int]:
-        pragma_lines = set(self._pragma_lines)
+        pragma_lines: set[int] = set()
         for block_index in range(self.blockCount()):
             block = self.document().findBlockByNumber(block_index)
             if block.isValid() and block.text().strip().startswith("pragma dqc.v1.split"):

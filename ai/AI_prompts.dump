@@ -659,16 +659,35 @@ when the user had already dragged some qubit-nodes/chunk-boxes around, then drag
 2026.06.23-13.18
 ---------------------------------------------
 the Chunk Dependencies graph edges should be directed edges (i.e. arrows).
-2026.06.23-14.22
+2026.06.24-14.22
 ---------------------------------------------
 the Chunk dependencies edges are still not directed.
-2026.06.23-14.28
+2026.06.24-14.28
 ---------------------------------------------
 Chunk dependencies graph's zoom is not working.
-2026.06.23-14.34
+2026.06.24-14.34
+---------------------------------------------
+when manually editing the original code next to the pragmas (by inserting some new code right before a split pragma), the split pragmas interfere with the editing by triggering some auto-deletion of manually-inserted empty lines, or by moving the new code around (instead of respecting the insertion point) as if the pragmas wanted to keep their initial position/line-number, even if the user wants to insert some code before it. Also: the bold+underlying formatting of the split pragmas difts and gets applied to adjacent lines.
+2026.06.24-15.37
 ---------------------------------------------
 
 
 
 ================ TODO:
+inject "barrier q[0], q[1], q[2];" just before the teleportation comment
+
 better uint rewrite rule
+
+############ UNDONE:
+when dealing with split code (it can be a qasm file where the user has marked a new split point by right-click, or a *.dqc file already having split pragmas), I want a visual representation of the resulting chunks, in the circuit drawing. Maybe we can add an overlay showing the chunk scopes represented as orange-bordered boxes framing their part of the circuit.
+2026.06.24-14.46
+---------------------------------------------
+The orange-bordered boxes framing the chunk scopes of the circuit are not framing their part of the circuit: they are just splitting the overall circuit area in many equal-sized boxes, completely ignoring the underlying elements of the circuit.
+Also: the orange boxes should have some margin, both from the circuit image external borders, and among themselves (=the boxes).
+Also: all the chunk/scope boxes have the "Chunk N" labels in the top-left corner, in the same position, so they overlap (unreadable!).
+2026.06.24-15.02
+---------------------------------------------
+still same problem with the chunk/scope boxes: their content is not matching the actual code.
+maybe we can start simpler: let's remove completely the boxes, and just add a spacer in the circuit, matching the position of the split pragmas (i.e. the teleportation comments in the rewritten code).
+2026.06.24-15.11
+---------------------------------------------

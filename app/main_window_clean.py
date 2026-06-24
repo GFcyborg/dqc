@@ -789,13 +789,15 @@ class MainWindow(QMainWindow):
             self.load_file(Path(selected))
 
     def toggle_split_point(self, line_no: int) -> None:
+        current_display_source = self.original_editor.toPlainText()
+        self.split_points = split_points_from_source(current_display_source)
         clicked_line = line_no
-        line_no = self._clicked_line_to_split_point(self.original_editor.toPlainText(), line_no)
+        line_no = self._clicked_line_to_split_point(current_display_source, line_no)
         clicked_block = self.original_editor.document().findBlockByNumber(max(0, clicked_line - 1))
         if clicked_block.isValid():
             cursor = QTextCursor(clicked_block)
             self.original_editor.setTextCursor(cursor)
-        analysis_source = self._split_save_source()
+        analysis_source = self._split_save_source(current_display_source)
         if line_is_inside_blocking_scope(analysis_source, line_no):
             self._show_status_feedback("Split blocked: inner scopes cannot be split.")
             return
@@ -803,6 +805,9 @@ class MainWindow(QMainWindow):
             self.split_points.remove(line_no)
         else:
             self.split_points.add(line_no)
+        display_source = self._reconstruct_source_with_pragmas(analysis_source, self.split_points)
+        self.current_source = display_source
+        self._set_original_editor_text_preserve_state(display_source)
         self.refresh()
 
     def _reconstruct_source_with_pragmas(self, raw_source: str, split_points: set[int]) -> str:
@@ -1034,14 +1039,11 @@ class MainWindow(QMainWindow):
         self.suggestion_label.setText(f"Split suggestions: {suggestion_text}")
 
     def refresh(self) -> None:
-        had_focus = self.original_editor.hasFocus()
-        cursor_position = self.original_editor.textCursor().position()
-        scroll_value = self.original_editor.verticalScrollBar().value()
-        horizontal_scroll = self.original_editor.horizontalScrollBar().value()
-        analysis_source = self._split_save_source()
-        analysis_split_points = self.split_points.copy()
-        display_source = self._reconstruct_source_with_pragmas(analysis_source, self.split_points)
+        display_source = self.original_editor.toPlainText()
         self.current_source = display_source
+        self.split_points = split_points_from_source(display_source)
+        analysis_source = self._split_save_source(display_source)
+        analysis_split_points = self.split_points.copy()
 
         active_rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.enabled) for rule in self.rules]
         needs_parameters = bool(scan_inputs(analysis_source)) and not self.parameter_bindings and not getattr(self, "_suppress_parameter_prompt", False)
@@ -1054,17 +1056,6 @@ class MainWindow(QMainWindow):
             self.original_editor.setRewriteSpans(result.spans)
             self.rewritten_view.set_rewrite_result(result.rewritten_source, result.spans)
             self.original_editor.setDiagnosticLines({})
-            self.original_editor.blockSignals(True)
-            if self.original_editor.toPlainText() != display_source:
-                self.original_editor.setPlainText(display_source)
-            cursor = QTextCursor(self.original_editor.document())
-            cursor.setPosition(min(cursor_position, max(0, self.original_editor.document().characterCount() - 1)))
-            self.original_editor.setTextCursor(cursor)
-            self.original_editor.verticalScrollBar().setValue(scroll_value)
-            self.original_editor.horizontalScrollBar().setValue(horizontal_scroll)
-            if had_focus:
-                self.original_editor.setFocus()
-            self.original_editor.blockSignals(False)
             pragma_lines = split_pragma_line_numbers(display_source)
             self.original_editor.setPragmaLines(pragma_lines)
             self.original_editor.setSplitSuggestions(set(result.suggested_split_points))
@@ -1092,9 +1083,34 @@ class MainWindow(QMainWindow):
             self._shutdown_runtime_executor()
             self.runtime_output.setPlainText(f"Runtime failed: {exc}")
 
-    def _split_save_source(self) -> str:
-        source = self.original_editor.toPlainText()
+    def _split_save_source(self, source: str | None = None) -> str:
+        source = self.original_editor.toPlainText() if source is None else source
         return "\n".join(line for line in source.splitlines() if not line.strip().startswith("pragma dqc.v1.split"))
+
+    def _set_original_editor_text_preserve_state(self, new_text: str) -> None:
+        had_focus = self.original_editor.hasFocus()
+        cursor = self.original_editor.textCursor()
+        cursor_block = cursor.blockNumber()
+        cursor_in_block = cursor.positionInBlock()
+        scroll_value = self.original_editor.verticalScrollBar().value()
+        horizontal_scroll = self.original_editor.horizontalScrollBar().value()
+
+        self.original_editor.blockSignals(True)
+        self.original_editor.setPlainText(new_text)
+        self.original_editor.blockSignals(False)
+
+        target_block = self.original_editor.document().findBlockByNumber(max(0, cursor_block))
+        if target_block.isValid():
+            target_pos = min(target_block.position() + cursor_in_block, target_block.position() + len(target_block.text()))
+        else:
+            target_pos = min(cursor.position(), max(0, self.original_editor.document().characterCount() - 1))
+        restored = QTextCursor(self.original_editor.document())
+        restored.setPosition(max(0, target_pos))
+        self.original_editor.setTextCursor(restored)
+        self.original_editor.verticalScrollBar().setValue(scroll_value)
+        self.original_editor.horizontalScrollBar().setValue(horizontal_scroll)
+        if had_focus:
+            self.original_editor.setFocus()
 
     def _persist_split_artifacts(self) -> Path | None:
         if not self.split_points:
