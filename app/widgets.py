@@ -44,14 +44,38 @@ def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, 
     return item
 
 
+def _is_split_generated_barrier_line(lines: list[str], index: int) -> bool:
+    if index < 0 or index >= len(lines):
+        return False
+    if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
+        return False
+
+    if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
+        return True
+
+    if index <= 0 or lines[index - 1].strip() != "*/":
+        return False
+
+    scan = index - 1
+    while scan >= 0:
+        stripped = lines[scan].strip()
+        if not stripped:
+            return False
+        if stripped.startswith("/* Teleporting qubits into chunk "):
+            return True
+        if stripped == "*/" or stripped.startswith("*"):
+            scan -= 1
+            continue
+        return False
+    return False
+
+
 def _has_split_generated_barriers(source: str | None) -> bool:
     if not source:
         return False
     lines = str(source).splitlines()
-    for index, line in enumerate(lines):
-        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
-            continue
-        if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
+    for index in range(len(lines)):
+        if _is_split_generated_barrier_line(lines, index):
             return True
     return False
 
@@ -62,11 +86,11 @@ def _split_generated_barrier_ordinals(source: str | None) -> set[int]:
     lines = str(source).splitlines()
     ordinals: set[int] = set()
     barrier_ordinal = 0
-    for index, line in enumerate(lines):
-        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
+    for index in range(len(lines)):
+        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
             continue
         barrier_ordinal += 1
-        if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
+        if _is_split_generated_barrier_line(lines, index):
             ordinals.add(barrier_ordinal)
     return ordinals
 
@@ -648,7 +672,7 @@ class HtmlCodeView(QTextBrowser):
         line_index = 0
         while line_index < len(lines):
             line = lines[line_index]
-            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line) and line_index + 1 < len(lines) and lines[line_index + 1].startswith("/* Teleporting qubits into chunk "):
+            if _is_split_generated_barrier_line(lines, line_index):
                 self._teleport_lines.add(line_index + 1)
                 tooltip_map.setdefault(line_index + 1, []).append(teleport_tooltip)
                 visible_lines.add(line_index + 1)
@@ -712,7 +736,7 @@ class HtmlCodeView(QTextBrowser):
         line_index = 0
         while line_index < len(lines):
             line = lines[line_index]
-            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line) and line_index + 1 < len(lines) and lines[line_index + 1].startswith("/* Teleporting qubits into chunk "):
+            if _is_split_generated_barrier_line(lines, line_index):
                 escaped = self._html_escape(line)
                 decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
                 line_index += 1

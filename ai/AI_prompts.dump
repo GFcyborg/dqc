@@ -682,13 +682,13 @@ split-generated barriers are still not orange: are you sure you can customize th
 now it works: split-generated barriers are orange, but pre-existing barriers (which are usually/initially colored in gray) turn orange too, as soon a split-generated barrier is found (live-inserted by the user, or by *.dqc code).
 2026.06.24-16.32
 ---------------------------------------------
+I also want an orange split-generated barrier injected just after the teleportation comment block.
+2026.06.24-16.42
+---------------------------------------------
+
 
 
 ================ TODO:
-coherently with dependencies analyzed (and referred to) by the dependency graph and the teleportation comments, inject a barrier on them.
-
-inject "barrier q[0], q[1], q[2];" just before the teleportation comment
-
 better uint rewrite rule
 
 ############ UNDONE:

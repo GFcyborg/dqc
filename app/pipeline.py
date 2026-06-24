@@ -742,16 +742,15 @@ def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict
             dependencies.append((int(source), name))
     dependencies.sort(key=lambda item: (item[0], item[1]))
 
-    if barrier_targets:
-        lines = [f"barrier {', '.join(sorted(barrier_targets))};", f"/* Teleporting qubits into chunk {next_chunk_index}:"]
-    else:
-        lines = ["barrier;", f"/* Teleporting qubits into chunk {next_chunk_index}:"]
+    barrier_line = f"barrier {', '.join(sorted(barrier_targets))};" if barrier_targets else "barrier;"
+    lines = [barrier_line, f"/* Teleporting qubits into chunk {next_chunk_index}:"]
     if dependencies:
         for source, name in dependencies:
             lines.append(f" * {name} from chunk {source}")
     else:
         lines.append(f" * no shared qubits from chunk {next_chunk_index - 1}")
     lines.append(" */")
+    lines.append(barrier_line)
     return lines
 
 

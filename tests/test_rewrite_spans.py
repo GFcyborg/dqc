@@ -67,9 +67,11 @@ class RewriteSpanTests(unittest.TestCase):
         )
         self.assertIn("/* Teleporting qubits into chunk 2:", dqc_qasm)
         self.assertRegex(dqc_qasm, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
+        self.assertRegex(dqc_qasm, r"\*/\nbarrier(?:\s+[^;]+)?;")
         self.assertIn("* q from chunk 1", dqc_qasm)
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertRegex(result.rewritten_source, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
+        self.assertRegex(result.rewritten_source, r"\*/\nbarrier(?:\s+[^;]+)?;")
         self.assertIn("* q from chunk 1", result.rewritten_source)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 4), 4)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 5), 4)
@@ -348,6 +350,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         rewritten = result.rewritten_source
         self.assertGreaterEqual(len(re.findall(r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk", rewritten)), 2)
+        self.assertGreaterEqual(len(re.findall(r"\*/\nbarrier(?:\s+[^;]+)?;", rewritten)), 2)
         self.assertIn("/* Teleporting qubits into chunk 2:", rewritten)
         self.assertIn("* anc from chunk 1", rewritten)
         self.assertIn("/* Teleporting qubits into chunk 3:", rewritten)
