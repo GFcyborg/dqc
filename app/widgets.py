@@ -912,6 +912,8 @@ class ChunkDagView(QGraphicsView):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setBackgroundBrush(QColor("#f8fbf7"))
         self.setStyleSheet("border: 1px solid #d0d0d0;")
         self._cached_flows: list[Any] = []
@@ -919,6 +921,62 @@ class ChunkDagView(QGraphicsView):
         self._reflow_in_progress = False
         self._last_reflow_viewport_size: QSize | None = None
         self._manual_chunk_positions: dict[int, QPointF] = {}
+
+    def fit_scene(self) -> None:
+        scene = self.scene()
+        if scene is None:
+            return
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            return
+        margin_x = max(8.0, rect.width() * 0.03)
+        margin_y = max(22.0, rect.height() * 0.12)
+        fit_rect = rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
+        scene.setSceneRect(fit_rect)
+        self.resetTransform()
+        self.fitInView(fit_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.centerOn(fit_rect.center())
+
+    def reset_zoom(self) -> None:
+        self.fit_scene()
+
+    def zoom(self, delta: int) -> None:
+        factor = 1.15 if delta > 0 else 1 / 1.15
+        current_scale = self._current_uniform_scale()
+        fit_scale = self._compute_fit_scale()
+        next_scale = current_scale * factor
+        if factor < 1.0 and current_scale <= fit_scale * 1.000000001:
+            return
+        if factor < 1.0 and next_scale < fit_scale * 1.000000001:
+            self.fit_scene()
+            return
+        if 0.12 <= next_scale <= 8.0:
+            self.scale(factor, factor)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        self.zoom(1 if event.angleDelta().y() > 0 else -1)
+        event.accept()
+
+    def _current_uniform_scale(self) -> float:
+        try:
+            scale = float(self.transform().m11())
+        except Exception:
+            return 1.0
+        if not math.isfinite(scale):
+            return 1.0
+        return max(1e-6, min(scale, 1e6))
+
+    def _compute_fit_scale(self) -> float:
+        scene_rect = self.sceneRect()
+        if scene_rect.isNull() or not scene_rect.isValid():
+            return 1.0
+        view_w = self.viewport().width()
+        view_h = self.viewport().height()
+        scene_w = scene_rect.width()
+        scene_h = scene_rect.height()
+        if view_w <= 0 or view_h <= 0 or scene_w <= 0 or scene_h <= 0:
+            return 1.0
+        return float(max(1e-6, min(view_w / scene_w, view_h / scene_h)))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -944,6 +1002,7 @@ class ChunkDagView(QGraphicsView):
         self._cached_font = QFont(font)
         self._last_reflow_viewport_size = self.viewport().size()
         self._render_cached_flows()
+        self.fit_scene()
 
     def _render_cached_flows(self) -> None:
         scene = self.scene()

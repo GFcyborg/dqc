@@ -664,10 +664,11 @@ the Chunk Dependencies graph edges should be directed edges (i.e. arrows).
 the Chunk dependencies edges are still not directed.
 2026.06.23-14.28
 ---------------------------------------------
+Chunk dependencies graph's zoom is not working.
+2026.06.23-14.34
+---------------------------------------------
 
 
 
 ================ TODO:
-
-
 better uint rewrite rule
