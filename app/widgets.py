@@ -801,7 +801,13 @@ class ParseTreeView(QTreeWidget):
             self.scrollToItem(found)
 
 
-def _draw_graph(scene: QGraphicsScene, graph, label_getter: Callable[[Any], str] | None = None, empty_message: str = "No graph available") -> None:
+def _draw_graph(
+    scene: QGraphicsScene,
+    graph,
+    label_getter: Callable[[Any], str] | None = None,
+    empty_message: str = "No graph available",
+    directed: bool = False,
+) -> None:
     scene.clear()
     if graph is None or graph.number_of_nodes() == 0:
         text = _add_selectable_scene_text(
@@ -825,10 +831,50 @@ def _draw_graph(scene: QGraphicsScene, graph, label_getter: Callable[[Any], str]
     span_x = max(max_x - min_x, 1e-6)
     span_y = max(max_y - min_y, 1e-6)
     scale = 520
+    edge_color = QColor("#60a5fa")
+    edge_pen = QPen(edge_color)
+    edge_pen.setWidthF(1.4)
+    arrow_size = 8.0
+
     for left, right, data in graph.edges(data=True):
         x1, y1 = pos[left]
         x2, y2 = pos[right]
-        scene.addLine((x1 - min_x) / span_x * scale, (y1 - min_y) / span_y * scale, (x2 - min_x) / span_x * scale, (y2 - min_y) / span_y * scale, QColor("#60a5fa"))
+        px1 = (x1 - min_x) / span_x * scale
+        py1 = (y1 - min_y) / span_y * scale
+        px2 = (x2 - min_x) / span_x * scale
+        py2 = (y2 - min_y) / span_y * scale
+
+        draw_end_x = px2
+        draw_end_y = py2
+        if directed:
+            dx = px2 - px1
+            dy = py2 - py1
+            angle = math.atan2(dy, dx)
+            draw_end_x = px2 - math.cos(angle) * arrow_size
+            draw_end_y = py2 - math.sin(angle) * arrow_size
+
+        scene.addLine(px1, py1, draw_end_x, draw_end_y, edge_pen)
+
+        if directed:
+            dx = px2 - px1
+            dy = py2 - py1
+            angle = math.atan2(dy, dx)
+            arrow_head = QPolygonF([
+                QPointF(px2, py2),
+                QPointF(
+                    draw_end_x - math.cos(angle - math.pi / 6) * arrow_size,
+                    draw_end_y - math.sin(angle - math.pi / 6) * arrow_size,
+                ),
+                QPointF(
+                    draw_end_x - math.cos(angle + math.pi / 6) * arrow_size,
+                    draw_end_y - math.sin(angle + math.pi / 6) * arrow_size,
+                ),
+            ])
+            arrow = QGraphicsPolygonItem(arrow_head)
+            arrow.setPen(QPen(edge_color))
+            arrow.setBrush(QBrush(edge_color))
+            scene.addItem(arrow)
+
         label = data.get("label") or data.get("weight")
         if label is not None:
             mid = scene.addText(str(label))
@@ -1081,22 +1127,31 @@ class ChunkDagView(QGraphicsView):
                     edge_labels.setdefault((source, index), []).append(name)
 
         edge_color = QColor("#2f6fff")
+        edge_pen = QPen(edge_color)
+        edge_pen.setWidthF(1.4)
+        arrow_size = 8.0
         edge_entries: list[dict[str, Any]] = []
         for edge_order, ((source, dest), labels) in enumerate(sorted(edge_labels.items())):
             if source not in node_items or dest not in node_items:
                 continue
-            line = scene.addLine(0.0, 0.0, 0.0, 0.0, QPen(edge_color))
+            line = scene.addLine(0.0, 0.0, 0.0, 0.0, edge_pen)
             label_text = ", ".join(sorted(labels))
             line.setToolTip(label_text)
             label = scene.addSimpleText(label_text)
             label.setFont(node_font)
             label.setBrush(edge_color)
+            arrow = QGraphicsPolygonItem()
+            arrow.setPen(QPen(edge_color))
+            arrow.setBrush(QBrush(edge_color))
+            arrow.setToolTip(label_text)
+            scene.addItem(arrow)
             edge_entries.append(
                 {
                     "order": edge_order,
                     "source": source,
                     "dest": dest,
                     "line": line,
+                    "arrow": arrow,
                     "label": label,
                     "label_text": label_text,
                 }
@@ -1122,14 +1177,37 @@ class ChunkDagView(QGraphicsView):
                 end_x = dst_pos.x()
                 end_y = dst_pos.y() + dst_h / 2.0
 
-                line = entry["line"]
-                line.setLine(start_x, start_y, end_x, end_y)
-                line.setToolTip(entry["label_text"])
-
-                label = entry["label"]
                 line_dx = end_x - start_x
                 line_dy = end_y - start_y
                 line_len = math.hypot(line_dx, line_dy) or 1.0
+                ux = line_dx / line_len
+                uy = line_dy / line_len
+                line_end_x = end_x - ux * arrow_size
+                line_end_y = end_y - uy * arrow_size
+
+                line = entry["line"]
+                line.setLine(start_x, start_y, line_end_x, line_end_y)
+                line.setToolTip(entry["label_text"])
+
+                arrow = entry["arrow"]
+                arrow.setPolygon(
+                    QPolygonF(
+                        [
+                            QPointF(end_x, end_y),
+                            QPointF(
+                                line_end_x - math.cos(math.atan2(line_dy, line_dx) - math.pi / 6) * arrow_size,
+                                line_end_y - math.sin(math.atan2(line_dy, line_dx) - math.pi / 6) * arrow_size,
+                            ),
+                            QPointF(
+                                line_end_x - math.cos(math.atan2(line_dy, line_dx) + math.pi / 6) * arrow_size,
+                                line_end_y - math.sin(math.atan2(line_dy, line_dx) + math.pi / 6) * arrow_size,
+                            ),
+                        ]
+                    )
+                )
+                arrow.setToolTip(entry["label_text"])
+
+                label = entry["label"]
                 normal_x = -line_dy / line_len
                 normal_y = line_dx / line_len
                 side = -1.0 if entry["order"] % 2 else 1.0
@@ -1612,7 +1690,7 @@ class ChunkDagTab(QWidget):
 
     def set_graph(self, graph, label_getter: Callable[[Any], str] | None = None, empty_message: str = "No graph available") -> None:
         scene = self.view.scene()
-        _draw_graph(scene, graph, label_getter, empty_message)
+        _draw_graph(scene, graph, label_getter, empty_message, directed=True)
         rect = scene.itemsBoundingRect()
         if not rect.isNull():
             margin_x = max(22.0, rect.width() * 0.10)
