@@ -798,12 +798,12 @@ class MainWindow(QMainWindow):
             cursor = QTextCursor(clicked_block)
             self.original_editor.setTextCursor(cursor)
         analysis_source = self._split_save_source(current_display_source)
-        if line_is_inside_blocking_scope(analysis_source, line_no):
-            self._show_status_feedback("Split blocked: inner scopes cannot be split.")
-            return
         if line_no in self.split_points:
             self.split_points.remove(line_no)
         else:
+            if line_is_inside_blocking_scope(analysis_source, line_no):
+                self._show_status_feedback("Split blocked: inner scopes cannot be split.")
+                return
             self.split_points.add(line_no)
         display_source = self._reconstruct_source_with_pragmas(analysis_source, self.split_points)
         self.current_source = display_source
