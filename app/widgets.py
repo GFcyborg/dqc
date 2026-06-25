@@ -139,6 +139,82 @@ def _recolor_split_generated_barriers(figure: Any, split_generated_ordinals: set
             patch.set_alpha(0.6)
 
 
+def _style_circuit_qubit_labels(figure: Any, circuit: Any, color_hex: str = "#1f5f2d") -> None:
+    axes = getattr(figure, "axes", None) or []
+    if not axes:
+        return
+
+    def _normalize_label_text(value: str) -> str:
+        # Qiskit mpl drawer often emits math-text labels like ${q}_{0}$.
+        text = str(value or "").strip()
+        if text.startswith("$") and text.endswith("$") and len(text) >= 2:
+            text = text[1:-1]
+        text = text.replace("\\mathrm", "")
+        text = text.replace("{", "").replace("}", "")
+        text = re.sub(r"[^A-Za-z0-9]+", "", text)
+        return text.lower()
+
+    qubit_label_variants: set[str] = set()
+    clbit_label_variants: set[str] = set()
+    for qubit in list(getattr(circuit, "qubits", []) or []):
+        register = getattr(qubit, "_register", None) or getattr(qubit, "register", None)
+        index = getattr(qubit, "_index", None)
+        if index is None:
+            index = getattr(qubit, "index", None)
+        register_name = getattr(register, "name", None) if register is not None else None
+        if register_name is not None and index is not None:
+            qubit_label_variants.update({
+                f"{register_name}[{index}]",
+                f"{register_name}_{index}",
+                f"{register_name}{index}",
+                f"${{{register_name}}}_{{{index}}}$",
+                f"${{{register_name}}}{index}$",
+            })
+        if register_name is not None:
+            qubit_label_variants.add(str(register_name))
+
+    for clbit in list(getattr(circuit, "clbits", []) or []):
+        register = getattr(clbit, "_register", None) or getattr(clbit, "register", None)
+        index = getattr(clbit, "_index", None)
+        if index is None:
+            index = getattr(clbit, "index", None)
+        register_name = getattr(register, "name", None) if register is not None else None
+        if register_name is not None and index is not None:
+            clbit_label_variants.update({
+                f"{register_name}[{index}]",
+                f"{register_name}_{index}",
+                f"{register_name}{index}",
+                f"${{{register_name}}}_{{{index}}}$",
+                f"${{{register_name}}}{index}$",
+            })
+        if register_name is not None:
+            clbit_label_variants.add(str(register_name))
+
+    qubit_label_variants = {_normalize_label_text(label) for label in qubit_label_variants if str(label).strip()}
+    clbit_label_variants = {_normalize_label_text(label) for label in clbit_label_variants if str(label).strip()}
+
+    if not qubit_label_variants:
+        return
+
+    for ax in axes:
+        text_items = list(getattr(ax, "texts", []) or [])
+        text_items.extend(list(getattr(ax, "get_yticklabels", lambda: [])() or []))
+        for text_item in text_items:
+            text_value = str(getattr(text_item, "get_text", lambda: "")() or "")
+            normalized = _normalize_label_text(text_value)
+            try:
+                if normalized in qubit_label_variants:
+                    text_item.set_color(color_hex)
+                    text_item.set_fontweight("bold")
+                    text_item.set_fontsize(float(getattr(text_item, "get_fontsize", lambda: 10.0)()) + 1.2)
+                elif normalized in clbit_label_variants:
+                    # Keep classical labels explicitly non-bold and slightly muted for stronger contrast.
+                    text_item.set_color("#64748b")
+                    text_item.set_fontweight("normal")
+            except Exception:
+                continue
+
+
 def _wrap_scene_message(text: str, width: int = 88) -> str:
     wrapped_lines: list[str] = []
     for line in str(text).splitlines() or [str(text)]:
@@ -1925,6 +2001,7 @@ class CircuitView(QWidget):
                 expr_len=60,
             )
             _recolor_split_generated_barriers(figure, split_generated_barriers)
+            _style_circuit_qubit_labels(figure, circuit)
             try:
                 figure.patch.set_facecolor("#ffffff")
             except Exception:

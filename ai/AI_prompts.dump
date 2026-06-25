@@ -685,7 +685,15 @@ now it works: split-generated barriers are orange, but pre-existing barriers (wh
 I also want an orange split-generated barrier injected just after the teleportation comment block.
 2026.06.24-16.42
 ---------------------------------------------
-
+I want the qubits labels of the circuit to be colored/highlighted in the same way that they are in the DAG (green & bold).
+2026.06.25-09.16
+---------------------------------------------
+It didn't work: the qubits labels of the circuit are not colored/highlighted like in the DAG (green & bold).
+2026.06.25-09.25
+---------------------------------------------
+the qubits labels of the circuit are finally formatted in green, but I cannot tell whether they are also bold. I want a stronger differentiation from the classical bits (are they in bold as well? maybe that's why I cannot tell them from the qubits).
+2026.06.25-09.32
+---------------------------------------------
 
 
 ================ TODO:
