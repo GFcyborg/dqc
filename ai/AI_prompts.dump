@@ -741,15 +741,81 @@ in order to support multiple split points, rule #8 (split-gen. teleports) should
 the anti-inner-scope-split guard is sometimes preventing some legitimate split toggles, e.g. qiskit-example.dqc line 38, where the split pragma is located, cannot be toggled off.
 2026.06.25-16.49
 ---------------------------------------------
-
+rule #8 (split-gen. teleports) should inject/adapt q-comm_template.qasm code in a more intelligent way: let's call <q> each dependency qubit of a split point #N (i.e. <q> is to be teleported into next chunk, i.e. into chunk N+1), then <q> must take the place of q_SOURCE<N> but, unlike q_SOURCE<N>, <q> should not be declared at the beginning of each split point, because <q> is coming from previous chunks, where it's been already declared by the original code.
+2026.06.25-19.04
+---------------------------------------------
+rule #8 (split-gen. teleports) is not handling multi-qubit arrays correctly (i.e. one element at a time, as it should): the template is intended to transfer 1 qubit at a time, so an array must be scanned through.
+2026.06.25-19.12
+---------------------------------------------
+rule #8 (split-gen. teleports) is processing multi-qubit arrays twice, e.g. bell_state.qasm has only 2 qubits but each split point produces 4 teleportations (they should be only 2), like this:
+qubit[2] q;
+...
+/* Teleporting qubits into chunk 2:
+ * q[0] from chunk 1
+ * q[0] from chunk 1
+ * q[1] from chunk 1
+ * q[1] from chunk 1
+ */
+...
+2026.06.25-19.24
+---------------------------------------------
+I want to simplify the way rule #8 (split-gen. teleports) expands template varnames at split point #N:
+- base case: when dealing with a single-qubit varname, its name should be put in place of "q" in the template varnames, and the split id should be appended at the end (after the "_" separator), so for example: for split point #3 and var w, it generates the qubit-varnames { w_epr_3 , w_epr_TARGET_3 }, and classical bit-varnames { telept_Zcorrect_w_3 , telept_Xcorrect_w_3 };
+- array case: when dealing with a multi-qubit array-var, it works like the base case, but each element expands by dropping the brackets, so for example: for split point #3 and var w[1], it generates the qubit-varnames { w1_epr_3 , w1_epr_TARGET_3 }, and classical bit-varnames { telept_Zcorrect_w1_3 , telept_Xcorrect_w1_3 };
+2026.06.25-20.09
+---------------------------------------------
+When splitting the code in chunks, DAG and Qubit interaction graphs use wrong names for split-generated vars, e.g. cout0_epr_1 and cout0_epr_TARGET_1 become cout0_epr_10 and cout0_epr_TARGET_10 ;
+2026.06.25-21.53
+---------------------------------------------
+when loading adder.dqc, the graphs shows error message:
+Qubit interaction unavailable: 'register name "a0_epr_2" already exists'
+The split-generated code is actually repeating some parts twice (hence the double declarations).
+Find the root cause and fix it.
+2026.06.25-22.20
+---------------------------------------------
+Increase allocated memory, so that the console warnings are solved (when loading big circuits, like multi-chunks cases):
+qt.gui.imageio: QImageIOHandler: Rejecting image as it exceeds the current allocation limit of 256 megabytes
+qt.gui.imageio: QImageIOHandler: Rejecting image as it exceeds the current allocation limit of 256 megabytes
+qt.gui.imageio: QImageIOHandler: Rejecting image as it exceeds the current allocation limit of 256 megabytes
+...
+2026.06.25-22.35
+---------------------------------------------
+When loading big circuits (multi-chunks) the runtime output shows an error message:
+Runtime failed: 'Number of qubits (42) in circuit-47-42319 is greater than maximum (30) in the coupling_map'
+Fix it.
+2026.06.25-22.38
+---------------------------------------------
+all custom-defined gates stopped working, e.g. majority gate in adder.qasm
+error message:
+Runtime failed: 'unknown instruction: majority'
+2026.06.25-22.44
+---------------------------------------------
+it seems like the memory tweaking didn't work: now I'm gettin this error in the runtime output:
+Runtime failed: 'ERROR:  [Experiment 0] a circuit requires more memory than max_memory_mb. ,  ERROR: a circuit requires more memory than max_memory_mb.'
+2026.06.25-22.50
+---------------------------------------------
+qiskit-example.dqc graphs now fails with error message:
+Overall DAG unavailable: 29,3: required a qubit or qubit register
+and circuit fails with error message:
+No circuit available
+2026.06.25-23.06
+---------------------------------------------
+remove initial and final barriers when injecting split-gen. teleportation blocks.
+2026.06.25-23.11
+---------------------------------------------
+default timeout to be set to 20 sec
+2026.06.25-23.14
+---------------------------------------------
 
 
 
 
 ================ TODO:
-rule #8 (split-gen. teleports) should inject q-comm_template.qasm code in a more intelligent way, suppressing the initial declaration of new qubits (q_SOURCE<N>), because the actual qubit-sources are the variables to be exported into next chunk.
 
-when injecting adapt the q-comm_template.qasm to qubit var-names
+
+make sure the template parsing is robust against template modifications; create a help page to document which patterns of the template are expected and should be preserved when editing it.
+
+When executing in split contexts (multi-chunks), make sure (and test) that each qubit lives only in 1 place (= 1 scope = 1 chunk) at a time (i.e. respect quantum no-cloning), even if it's been aliased (like aliased variable in qiskit-example.dqc): in a monolithic context (=1 chunk) this property is enforced directly/automatically by qiskit, but in a multi-chunk context this enforcement cannot be done by qiskit (because from its point of view the code is always run in single runtime context: we are simulating a multi-QPUs network, but the simulation lives only at the logical level, in QASM3 language).
 
 rule #8 (split-gen. teleports) should inject q-comm_template.qasm code after adapting it in an intelligent context-sensitive way, according to the split dependency analysis: for each qubit to be exported into next chunk scope, the q_SOURCE should be ...
 repeated/multi split-gen. teleports are re-using same var-names: fix it.

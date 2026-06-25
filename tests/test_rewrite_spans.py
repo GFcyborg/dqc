@@ -5,7 +5,7 @@ import unittest
 
 from pathlib import Path
 
-from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, ordered_active_rule_ids, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_points_from_source, substitute_inputs
+from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, ordered_active_rule_ids, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_generated_teleportations, split_points_from_source, substitute_inputs
 
 
 class RewriteSpanTests(unittest.TestCase):
@@ -81,17 +81,38 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "include \"stdgates.inc\";", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
         self.assertIn("/* Teleporting qubits into chunk 2:", dqc_qasm)
-        self.assertRegex(dqc_qasm, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
-        self.assertRegex(dqc_qasm, r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;")
-        self.assertIn("qubit q_SOURCE1;", dqc_qasm)
-        self.assertIn("* q from chunk 1", dqc_qasm)
+        self.assertNotIn("qubit q_SOURCE", dqc_qasm)
+        self.assertIn("cx q[0], q0_epr_1;", dqc_qasm)
+        self.assertIn("* q[0] from chunk 1", dqc_qasm)
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
-        self.assertRegex(result.rewritten_source, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
-        self.assertRegex(result.rewritten_source, r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;")
-        self.assertIn("qubit q_SOURCE1;", result.rewritten_source)
-        self.assertIn("* q from chunk 1", result.rewritten_source)
+        self.assertNotIn("qubit q_SOURCE", result.rewritten_source)
+        self.assertIn("cx q[0], q0_epr_1;", result.rewritten_source)
+        self.assertIn("* q[0] from chunk 1", result.rewritten_source)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 4), 4)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 5), 4)
+
+    def test_split_generated_teleportations_ignore_non_qubit_dependencies(self) -> None:
+        lines = split_generated_teleportations(
+            split_id=1,
+            next_chunk_index=2,
+            incoming_sources={
+                "a": {1},
+                "mid": {1},
+                "q": {1},
+                "q[1]": {1},
+                "aliased[0]": {1},
+            },
+            qubit_register_names={"q"},
+            qubit_register_sizes={"q": 2},
+        )
+        rendered = "\n".join(lines)
+
+        self.assertIn("* q[0] from chunk 1", rendered)
+        self.assertIn("* q[1] from chunk 1", rendered)
+        self.assertNotIn("* a from chunk 1", rendered)
+        self.assertNotIn("* mid from chunk 1", rendered)
+        self.assertNotIn("* aliased[0] from chunk 1", rendered)
+        self.assertNotRegex(rendered, r"\bcx\s+a\b")
 
     def test_split_points_are_derived_from_loaded_dqc_pragmas(self) -> None:
         dqc_source = "\n".join([
@@ -138,7 +159,7 @@ class RewriteSpanTests(unittest.TestCase):
         result = rewrite_and_analyze(source, rules, {3}, {}, shots=1, timeout_s=1)
 
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
-        self.assertIn("* q from chunk 1", result.rewritten_source)
+        self.assertIn("* q[0] from chunk 1", result.rewritten_source)
 
     def test_disabled_rule_eight_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
         source = "\n".join([
@@ -401,10 +422,10 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertEqual(len(result.chunk_flows), 2)
         first_flow = result.chunk_flows[0]
         second_flow = result.chunk_flows[1]
-        self.assertIn("q", first_flow.outgoing_targets)
-        self.assertIn(2, first_flow.outgoing_targets["q"])
-        self.assertIn("q", second_flow.incoming_sources)
-        self.assertIn(1, second_flow.incoming_sources["q"])
+        self.assertIn("q[0]", first_flow.outgoing_targets)
+        self.assertIn(2, first_flow.outgoing_targets["q[0]"])
+        self.assertIn("q[0]", second_flow.incoming_sources)
+        self.assertIn(1, second_flow.incoming_sources["q[0]"])
         self.assertIsNotNone(result.chunk_graph)
         self.assertTrue(result.chunk_graph.has_edge(1, 2))
 
@@ -426,31 +447,83 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertEqual(len(result.chunk_flows), 3)
         chunk2 = result.chunk_flows[1]
         chunk3 = result.chunk_flows[2]
-        self.assertIn("anc", chunk2.incoming_sources)
-        self.assertIn(1, chunk2.incoming_sources["anc"])
-        self.assertIn("q", chunk3.incoming_sources)
-        self.assertIn(1, chunk3.incoming_sources["q"])
+        self.assertIn("anc[0]", chunk2.incoming_sources)
+        self.assertIn(1, chunk2.incoming_sources["anc[0]"])
+        self.assertIn("q[0]", chunk3.incoming_sources)
+        self.assertIn(1, chunk3.incoming_sources["q[0]"])
 
         rewritten = result.rewritten_source
-        self.assertGreaterEqual(len(re.findall(r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk", rewritten)), 2)
-        self.assertGreaterEqual(len(re.findall(r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;", rewritten)), 2)
-        self.assertIn("qubit q_SOURCE1;", rewritten)
-        self.assertIn("qubit q_SOURCE2;", rewritten)
-        self.assertIn("qubit q_epr1;", rewritten)
-        self.assertIn("qubit q_epr2;", rewritten)
-        self.assertIn("qubit q_epr_TARGET1;", rewritten)
-        self.assertIn("qubit q_epr_TARGET2;", rewritten)
-        self.assertIn("bit telept_Zcorrect_q1;", rewritten)
-        self.assertIn("bit telept_Zcorrect_q2;", rewritten)
-        self.assertIn("bit telept_Xcorrect_q1;", rewritten)
-        self.assertIn("bit telept_Xcorrect_q2;", rewritten)
+        self.assertGreaterEqual(len(re.findall(r"/\* Teleporting qubits into chunk", rewritten)), 2)
+        self.assertNotIn("qubit q_SOURCE", rewritten)
+        self.assertIn("qubit anc0_epr_1;", rewritten)
+        self.assertIn("qubit q0_epr_2;", rewritten)
+        self.assertIn("qubit anc0_epr_TARGET_1;", rewritten)
+        self.assertIn("qubit q0_epr_TARGET_2;", rewritten)
+        self.assertIn("bit telept_Zcorrect_anc0_1;", rewritten)
+        self.assertIn("bit telept_Zcorrect_q0_2;", rewritten)
+        self.assertIn("bit telept_Xcorrect_anc0_1;", rewritten)
+        self.assertIn("bit telept_Xcorrect_q0_2;", rewritten)
+        self.assertIn("cx anc[0], anc0_epr_1;", rewritten)
+        self.assertIn("cx q[0], q0_epr_2;", rewritten)
         self.assertIn("/* Teleporting qubits into chunk 2:", rewritten)
-        self.assertIn("* anc from chunk 1", rewritten)
+        self.assertIn("* anc[0] from chunk 1", rewritten)
         self.assertIn("/* Teleporting qubits into chunk 3:", rewritten)
-        self.assertIn("* q from chunk 1", rewritten)
+        self.assertIn("* q[0] from chunk 1", rewritten)
 
         self.assertTrue(result.chunk_graph.has_edge(1, 2))
         self.assertTrue(result.chunk_graph.has_edge(1, 3))
+
+    def test_split_generated_teleports_expand_bare_qubit_arrays_one_element_at_a_time(self) -> None:
+        generated = split_generated_teleportations(
+            split_id=3,
+            next_chunk_index=4,
+            incoming_sources={"q": {2}},
+            qubit_register_names={"q"},
+            qubit_register_sizes={"q": 3},
+        )
+        rendered = "\n".join(generated)
+
+        self.assertIn("* q[0] from chunk 2", rendered)
+        self.assertIn("* q[1] from chunk 2", rendered)
+        self.assertIn("* q[2] from chunk 2", rendered)
+        self.assertIn("cx q[0], q0_epr_3;", rendered)
+        self.assertIn("cx q[1], q1_epr_3;", rendered)
+        self.assertIn("cx q[2], q2_epr_3;", rendered)
+        self.assertIn("qubit q0_epr_TARGET_3;", rendered)
+        self.assertIn("bit telept_Zcorrect_q0_3;", rendered)
+        self.assertNotIn("qubit q_SOURCE", rendered)
+
+    def test_split_generated_teleports_deduplicate_mixed_base_and_indexed_dependencies(self) -> None:
+        generated = split_generated_teleportations(
+            split_id=1,
+            next_chunk_index=2,
+            incoming_sources={"q": {1}, "q[0]": {1}, "q[1]": {1}},
+            qubit_register_names={"q"},
+            qubit_register_sizes={"q": 2},
+        )
+        rendered = "\n".join(generated)
+
+        self.assertEqual(rendered.count("* q[0] from chunk 1"), 1)
+        self.assertEqual(rendered.count("* q[1] from chunk 1"), 1)
+        self.assertEqual(rendered.count("cx q[0], q0_epr_1;"), 1)
+        self.assertEqual(rendered.count("cx q[1], q1_epr_1;"), 1)
+
+    def test_split_generated_teleports_do_not_duplicate_when_same_dependency_has_multiple_sources(self) -> None:
+        generated = split_generated_teleportations(
+            split_id=2,
+            next_chunk_index=3,
+            incoming_sources={"a[0]": {1, 2}},
+            qubit_register_names={"a"},
+            qubit_register_sizes={"a": 4},
+        )
+        rendered = "\n".join(generated)
+
+        self.assertIn("* a[0] from chunks 1, 2", rendered)
+        self.assertEqual(rendered.count("qubit a0_epr_2;"), 1)
+        self.assertEqual(rendered.count("qubit a0_epr_TARGET_2;"), 1)
+        self.assertEqual(rendered.count("bit telept_Zcorrect_a0_2;"), 1)
+        self.assertEqual(rendered.count("bit telept_Xcorrect_a0_2;"), 1)
+        self.assertEqual(rendered.count("cx a[0], a0_epr_2;"), 1)
 
 
 if __name__ == "__main__":

@@ -790,53 +790,85 @@ def add_split_markers(lines: list[str], split_lines: set[int]) -> str:
     return "\n".join(out)
 
 
-def _suffix_template_symbol_names(template_lines: list[str], split_id: int) -> list[str]:
-    suffix = str(split_id)
-    symbol_names = [
-        "q_SOURCE",
-        "q_epr_TARGET",
-        "q_epr",
-        "telept_Zcorrect_q",
-        "telept_Xcorrect_q",
-    ]
+def _source_qubit_token(source_qubit: str) -> str:
+    normalized = (source_qubit or "").strip()
+    if not normalized:
+        return "q"
+    return re.sub(r"[^A-Za-z0-9_]", "", normalized)
+
+
+def _suffix_template_symbol_names(template_lines: list[str], split_id: int, source_qubit: str) -> list[str]:
+    token = _source_qubit_token(source_qubit)
+    replacements = {
+        "q_epr_TARGET": f"{token}_epr_TARGET_{split_id}",
+        "q_epr": f"{token}_epr_{split_id}",
+        "telept_Zcorrect_q": f"telept_Zcorrect_{token}_{split_id}",
+        "telept_Xcorrect_q": f"telept_Xcorrect_{token}_{split_id}",
+    }
     rewritten_lines = list(template_lines)
-    for symbol in symbol_names:
+    for symbol, replacement in replacements.items():
         pattern = re.compile(rf"\b{re.escape(symbol)}\b")
-        replacement = f"{symbol}{suffix}"
         rewritten_lines = [pattern.sub(replacement, line) for line in rewritten_lines]
     return rewritten_lines
 
 
-def split_generated_teleportations(split_id: int, next_chunk_index: int, incoming_sources: dict[str, set[int]] | None, qubit_register_names: set[str] | None = None) -> list[str]:
+def _adapt_template_for_dependency(template_lines: list[str], split_id: int, source_qubit: str) -> list[str]:
+    rewritten_lines = _suffix_template_symbol_names(template_lines, split_id, source_qubit)
+    output: list[str] = []
+    source_decl_pattern = re.compile(r"^\s*qubit\s+q_SOURCE\s*;\s*$")
+    source_symbol_pattern = re.compile(r"\bq_SOURCE\b")
+    for line in rewritten_lines:
+        if source_decl_pattern.match(line):
+            continue
+        output.append(source_symbol_pattern.sub(source_qubit, line))
+    return output
+
+
+def split_generated_teleportations(
+    split_id: int,
+    next_chunk_index: int,
+    incoming_sources: dict[str, set[int]] | None,
+    qubit_register_names: set[str] | None = None,
+    qubit_register_sizes: dict[str, int] | None = None,
+) -> list[str]:
     incoming_sources = incoming_sources or {}
     qubit_register_names = qubit_register_names or set()
-    dependencies: list[tuple[int, str]] = []
+    qubit_register_sizes = qubit_register_sizes or {}
+    dependency_sources_by_name: dict[str, set[int]] = defaultdict(set)
     barrier_targets: set[str] = set()
     for name, sources in incoming_sources.items():
         base_name = re.sub(r"\s*\[[^\]]+\]\s*$", "", name.strip())
-        if base_name in qubit_register_names:
-            barrier_targets.add(base_name)
-        for source in sources:
-            dependencies.append((int(source), name))
-    dependencies.sort(key=lambda item: (item[0], item[1]))
+        # Teleportation templates are qubit-only. Skip classical/input/gate symbols.
+        if base_name not in qubit_register_names:
+            continue
+        barrier_targets.add(base_name)
+        expanded_names = _expand_dependency_qubit_names(name, qubit_register_sizes)
+        for expanded_name in expanded_names:
+            for source in sources:
+                dependency_sources_by_name[expanded_name].add(int(source))
 
-    barrier_line = f"barrier {', '.join(sorted(barrier_targets))};" if barrier_targets else "barrier;"
-    lines = [barrier_line, f"/* Teleporting qubits into chunk {next_chunk_index}:" ]
-    if dependencies:
-        for source, name in dependencies:
-            lines.append(f" * {name} from chunk {source}")
+    dependency_names = sorted(dependency_sources_by_name)
+
+    lines = [f"/* Teleporting qubits into chunk {next_chunk_index}:" ]
+    if dependency_names:
+        for name in dependency_names:
+            sources = sorted(dependency_sources_by_name.get(name, set()))
+            if len(sources) == 1:
+                lines.append(f" * {name} from chunk {sources[0]}")
+            else:
+                joined = ", ".join(str(source) for source in sources)
+                lines.append(f" * {name} from chunks {joined}")
     else:
         lines.append(f" * no shared qubits from chunk {next_chunk_index - 1}")
     lines.append(" */")
 
     template_path = Path(__file__).with_name("q-comm_template.qasm")
-    if template_path.exists():
+    if template_path.exists() and dependency_names:
         template_text = template_path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
         template_lines = template_text.splitlines()
-        template_lines = _suffix_template_symbol_names(template_lines, split_id)
-        lines.extend(template_lines)
-
-    lines.append(barrier_line)
+        for dependency_name in dependency_names:
+            adapted = _adapt_template_for_dependency(template_lines, split_id, dependency_name.strip())
+            lines.extend(adapted)
     return lines
 
 
@@ -914,10 +946,39 @@ def extract_qubit_register_names(source: str) -> set[str]:
     return names
 
 
+def extract_qubit_register_sizes(source: str) -> dict[str, int]:
+    sizes: dict[str, int] = {}
+    for line in normalize_lines(source):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        sized = re.match(r"^\s*qubit\s*\[\s*(\d+)\s*\]\s*([A-Za-z_][A-Za-z0-9_]*)\b", line)
+        if sized:
+            sizes[sized.group(2)] = int(sized.group(1))
+            continue
+        scalar = re.match(r"^\s*qubit\s+([A-Za-z_][A-Za-z0-9_]*)\b", line)
+        if scalar:
+            sizes[scalar.group(1)] = 1
+    return sizes
+
+
+def _expand_dependency_qubit_names(name: str, qubit_register_sizes: dict[str, int]) -> list[str]:
+    normalized = (name or "").strip()
+    if not normalized:
+        return []
+    if "[" in normalized and normalized.endswith("]"):
+        return [normalized]
+    size = qubit_register_sizes.get(normalized)
+    if size is None or size <= 1:
+        return [normalized]
+    return [f"{normalized}[{index}]" for index in range(size)]
+
+
 def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list[ChunkFlow] | None = None) -> tuple[str, str]:
     lines = normalize_lines(source)
     dqc_source = add_split_markers(lines, split_lines)
     qubit_register_names = extract_qubit_register_names(source)
+    qubit_register_sizes = extract_qubit_register_sizes(source)
 
     if chunk_flows is None:
         chunk_texts = split_dqc_chunks(dqc_source)
@@ -933,7 +994,15 @@ def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list
             incoming_sources: dict[str, set[int]] = {}
             if 1 <= next_chunk_index <= len(chunk_flows):
                 incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
-            generated.extend(split_generated_teleportations(split_id, next_chunk_index, incoming_sources, qubit_register_names))
+            generated.extend(
+                split_generated_teleportations(
+                    split_id,
+                    next_chunk_index,
+                    incoming_sources,
+                    qubit_register_names,
+                    qubit_register_sizes,
+                )
+            )
             split_idx += 1
         generated.append(line)
     dqc_qasm = "\n".join(generated)
@@ -976,8 +1045,39 @@ def _identifier_name(node: Any) -> str:
         return getattr(node, "name", "") or ""
     if kind_name == "IndexedIdentifier":
         base = getattr(node, "name", None)
-        return getattr(base, "name", "") or ""
+        base_name = getattr(base, "name", "") or ""
+        indices = getattr(node, "indices", None) or []
+        index_parts: list[str] = []
+        for dim in indices:
+            entries = dim if isinstance(dim, list) else [dim]
+            if len(entries) != 1:
+                return base_name
+            entry = entries[0]
+            entry_kind = type(entry).__name__
+            if entry_kind == "IntegerLiteral":
+                index_parts.append(str(getattr(entry, "value", "")))
+                continue
+            if entry_kind == "Identifier":
+                idx_name = getattr(entry, "name", "") or ""
+                if idx_name:
+                    index_parts.append(idx_name)
+                    continue
+            return base_name
+        if not index_parts:
+            return base_name
+        return f"{base_name}" + "".join(f"[{part}]" for part in index_parts)
     return ""
+
+
+def _base_identifier_name(name: str) -> str:
+    return re.sub(r"\s*\[.*$", "", (name or "").strip())
+
+
+def _lookup_writer(current_writers: dict[str, int], name: str) -> int | None:
+    writer = current_writers.get(name)
+    if writer is not None:
+        return writer
+    return current_writers.get(_base_identifier_name(name))
 
 
 def _node_identifier_names(node: Any) -> set[str]:
@@ -1120,7 +1220,7 @@ def _scan_statement_dependencies(
         condition_used = _node_identifier_names(getattr(stmt, "condition", None))
         used.update(condition_used)
         for name in sorted(condition_used):
-            writer = current_writers.get(name)
+            writer = _lookup_writer(current_writers, name)
             if writer is not None and writer != chunk_index:
                 incoming_sources.setdefault(name, set()).add(writer)
                 outgoing_targets.setdefault(writer, {}).setdefault(name, set()).add(chunk_index)
@@ -1134,7 +1234,7 @@ def _scan_statement_dependencies(
         condition_used = _node_identifier_names(getattr(stmt, "while_condition", None))
         used.update(condition_used)
         for name in sorted(condition_used):
-            writer = current_writers.get(name)
+            writer = _lookup_writer(current_writers, name)
             if writer is not None and writer != chunk_index:
                 incoming_sources.setdefault(name, set()).add(writer)
                 outgoing_targets.setdefault(writer, {}).setdefault(name, set()).add(chunk_index)
@@ -1152,7 +1252,7 @@ def _scan_statement_dependencies(
     defined.update(stmt_defined)
 
     for name in sorted(stmt_used):
-        writer = current_writers.get(name)
+        writer = _lookup_writer(current_writers, name)
         if writer is not None and writer != chunk_index:
             incoming_sources.setdefault(name, set()).add(writer)
             outgoing_targets.setdefault(writer, {}).setdefault(name, set()).add(chunk_index)
@@ -1518,19 +1618,62 @@ def qasm_token_graph(source: str) -> tuple[nx.DiGraph, nx.Graph, nx.DiGraph]:
     return dag, interaction, chunk_graph
 
 
+def _compile_for_aer_runtime(circuit: Any):
+    from qiskit import transpile
+
+    # Do not transpile against an Aer backend target, otherwise large circuits
+    # can fail with backend coupling_map qubit limits (e.g. >30 qubits).
+    # Decompose custom gate definitions first (e.g. `majority`), then transpile
+    # without backend coupling constraints.
+    working_circuit = circuit
+    try:
+        working_circuit = working_circuit.decompose(reps=10)
+    except Exception:
+        working_circuit = circuit
+
+    try:
+        return transpile(working_circuit, optimization_level=0)
+    except Exception:
+        return working_circuit
+
+
+def _is_aer_memory_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "requires more memory than max_memory_mb" in message
+        or "insufficient memory" in message
+    )
+
+
+def _run_aer_counts_with_fallback(compiled: Any, shots: int) -> dict[str, int]:
+    from qiskit_aer import AerSimulator
+
+    backends = [
+        AerSimulator(),
+        AerSimulator(method="matrix_product_state"),
+    ]
+    last_exc: Exception | None = None
+    for backend in backends:
+        try:
+            result = backend.run(compiled, shots=shots).result()
+            return dict(result.get_counts())
+        except Exception as exc:
+            last_exc = exc
+            if not _is_aer_memory_error(exc):
+                raise
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Aer execution failed without a reported exception")
+
+
 def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | None = None) -> RewriteResult:
     from qiskit_qasm3_import import parse as qiskit_parse
-    from qiskit_aer import AerSimulator
-    from qiskit import transpile
 
     start = time.perf_counter()
     circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
     circuit = _bind_circuit_parameters(circuit, parameter_bindings)
-    backend = AerSimulator()
-    compiled = transpile(circuit, backend)
-    job = backend.run(compiled, shots=shots)
-    result = job.result()
-    counts = dict(result.get_counts())
+    compiled = _compile_for_aer_runtime(circuit)
+    counts = _run_aer_counts_with_fallback(compiled, shots)
     duration_s = time.perf_counter() - start
     return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s)
 
@@ -1539,15 +1682,11 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
     run_timestamp = datetime.now(timezone.utc)
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
-        from qiskit import transpile
-        from qiskit_aer import AerSimulator
 
         circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
         circuit = _bind_circuit_parameters(circuit, parameter_bindings)
-        backend = AerSimulator()
-        compiled = transpile(circuit, backend)
-        result = backend.run(compiled, shots=shots).result()
-        return dict(result.get_counts()), None, run_timestamp
+        compiled = _compile_for_aer_runtime(circuit)
+        return _run_aer_counts_with_fallback(compiled, shots), None, run_timestamp
     except Exception as exc:
         return None, str(exc), run_timestamp
 
@@ -1622,8 +1761,6 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     duration_s = 0.0
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
-        from qiskit import transpile
-        from qiskit_aer import AerSimulator
 
         runtime_source = display_rewritten_source
         circuit_result, removed_pragmas = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
@@ -1633,11 +1770,8 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
             circuit_result = _bind_circuit_parameters(circuit_result, parameter_bindings)
         if execute_runtime:
             start = time.perf_counter()
-            backend = AerSimulator()
-            compiled = transpile(circuit_result, backend)
-            job = backend.run(compiled, shots=shots)
-            result = job.result(timeout=timeout_s)
-            counts = dict(result.get_counts())
+            compiled = _compile_for_aer_runtime(circuit_result)
+            counts = _run_aer_counts_with_fallback(compiled, shots)
             duration_s = time.perf_counter() - start
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"Runtime execution failed: {exc}", kind="error"))

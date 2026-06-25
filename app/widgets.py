@@ -236,8 +236,15 @@ def _wrap_scene_message(text: str, width: int = 88) -> str:
 def _wire_label(wire: Any) -> str:
     register = getattr(wire, "_register", None) or getattr(wire, "register", None)
     register_name = None
+    register_size = None
     if register is not None:
         register_name = getattr(register, "name", None)
+        register_size = getattr(register, "size", None)
+        if register_size is None:
+            try:
+                register_size = len(register)
+            except Exception:
+                register_size = None
         if register_name is None and isinstance(register, (tuple, list)) and len(register) > 1:
             register_name = register[1]
 
@@ -246,7 +253,13 @@ def _wire_label(wire: Any) -> str:
         index = getattr(wire, "index", None)
 
     if register_name is not None and index is not None:
-        return f"{register_name}{index}"
+        suppress_scalar_zero_suffix = False
+        try:
+            suppress_scalar_zero_suffix = int(register_size) == 1 and int(index) == 0 and bool(re.search(r"\d$", str(register_name)))
+        except Exception:
+            suppress_scalar_zero_suffix = False
+        if not suppress_scalar_zero_suffix:
+            return f"{register_name}{index}"
     if register_name is not None:
         return str(register_name)
 

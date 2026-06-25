@@ -3,13 +3,14 @@ from __future__ import annotations
 import concurrent.futures
 import importlib
 import multiprocessing
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QKeySequence, QTextCursor
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QImageReader, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -178,7 +179,7 @@ class MainWindow(QMainWindow):
         self.split_points: set[int] = set()
         self.parameter_bindings: dict[str, str] = {}
         self.shots = 1024
-        self.timeout_s = 10
+        self.timeout_s = 20
         self.distributed_nodes = 3
         self._find_query = ""
         self._find_case_insensitive = True
@@ -1436,6 +1437,12 @@ class MainWindow(QMainWindow):
 
 
 def launch_app() -> int:
+    # Raise Qt's image read allocation limit so large rendered circuit images are accepted.
+    limit_mb_text = os.environ.get("DQC_QT_IMAGE_ALLOC_MB", "1024").strip()
+    try:
+        QImageReader.setAllocationLimit(max(256, int(limit_mb_text)))
+    except Exception:
+        QImageReader.setAllocationLimit(1024)
     app = QApplication.instance() or QApplication([])
     window = MainWindow(Path(__file__).resolve().parents[1])
     window.showMaximized()

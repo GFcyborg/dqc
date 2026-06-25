@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import line_is_inside_blocking_scope, qasm_token_graph, suggest_split_points
+from app.pipeline import line_is_inside_blocking_scope, qasm_token_graph, run_runtime_counts, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
@@ -88,6 +89,49 @@ class PipelineRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(interaction.nodes()), 1)
         self.assertGreaterEqual(len(chunk_graph.edges()), 1)
 
+    def test_runtime_counts_supports_large_qubit_circuits_without_coupling_map_failure(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "qubit[42] q;",
+                "bit[42] c;",
+                "h q[0];",
+                "measure q -> c;",
+            ]
+        )
+
+        counts, error, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
+
+        if error is not None:
+            lowered = error.lower()
+            self.assertNotIn("coupling_map", lowered)
+            self.assertNotIn("greater than maximum", lowered)
+        else:
+            self.assertIsNotNone(counts)
+
+    def test_runtime_counts_supports_custom_gate_definitions(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "gate majority a, b, c {",
+                "  cx c, b;",
+                "  cx c, a;",
+                "  ccx a, b, c;",
+                "}",
+                "qubit[3] q;",
+                "bit[3] c;",
+                "majority q[0], q[1], q[2];",
+                "measure q -> c;",
+            ]
+        )
+
+        counts, error, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(counts)
+
 
 class GraphLabelRegressionTests(unittest.TestCase):
     def test_wire_label_uses_register_name_instead_of_uid_repr(self) -> None:
@@ -96,6 +140,13 @@ class GraphLabelRegressionTests(unittest.TestCase):
 
         self.assertEqual(_wire_label(anc[1]), "anc1")
         self.assertEqual(_wire_label(c[0]), "c0")
+
+    def test_wire_label_keeps_scalar_register_name_without_appending_zero(self) -> None:
+        split_wire = QuantumRegister(1, "cout0_epr_1")[0]
+        split_target_wire = QuantumRegister(1, "cout0_epr_TARGET_1")[0]
+
+        self.assertEqual(_wire_label(split_wire), "cout0_epr_1")
+        self.assertEqual(_wire_label(split_target_wire), "cout0_epr_TARGET_1")
 
     def test_multi_qubit_interaction_counts_and_gate_names(self) -> None:
         anc = QuantumRegister(2, "anc")
