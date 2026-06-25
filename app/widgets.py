@@ -1553,13 +1553,15 @@ class QiskitDagView(QGraphicsView):
         wire_gap = 42.0
         layer_gap = 140.0
         node_h = 28.0
+        node_right_margin = 16.0
+        first_box_lead_margin = 32.0
 
         metrics = QFontMetricsF(node_font)
         node_widths: list[float] = [max(44.0, metrics.horizontalAdvance(getattr(node, "name", "op")) + 18.0) for node in op_nodes]
 
         wire_y: dict[Any, float] = {wire: top + index * wire_gap for index, wire in enumerate(wires)}
         max_node_w = max(node_widths, default=44.0)
-        scene_right = left + max(1, len(op_nodes) - 1) * layer_gap + max_node_w + 40.0
+        scene_right = left + first_box_lead_margin + max(1, len(op_nodes) - 1) * layer_gap + max_node_w + node_right_margin + 40.0
         edge_pen = QPen(QColor("#2f6fff"))
         edge_pen.setWidthF(1.4)
 
@@ -1585,7 +1587,7 @@ class QiskitDagView(QGraphicsView):
             if not node_wires:
                 continue
 
-            x_center = left + index * layer_gap
+            x_center = left + first_box_lead_margin + index * layer_gap
             y_center = sum(wire_y[wire] for wire in node_wires) / len(node_wires)
             if len(node_wires) > 1:
                 y_center += (index % 2) * 6.0
@@ -1640,7 +1642,8 @@ class QiskitDagView(QGraphicsView):
                 arrow.setBrush(QBrush(QColor("#2f6fff")))
                 scene.addItem(arrow)
 
-                last_x[wire] = x_center + node_w / 2
+                # Keep a small gap after each node box before starting the next connection.
+                last_x[wire] = x_center + node_w / 2 + node_right_margin
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-20, -20, 20, 20))
         self._user_interacted = False

@@ -694,9 +694,30 @@ It didn't work: the qubits labels of the circuit are not colored/highlighted lik
 the qubits labels of the circuit are finally formatted in green, but I cannot tell whether they are also bold. I want a stronger differentiation from the classical bits (are they in bold as well? maybe that's why I cannot tell them from the qubits).
 2026.06.25-09.32
 ---------------------------------------------
+sometimes (not always) some qubits get renamed (by qiskit?), prefixing "esc_" to the actual/original name. why does it happen?
 
+[answer: to sanitize unsafe names, i.e.: starting with numbers or capitals]
+2026.06.25-10.55
+---------------------------------------------
+in DAG I want some more margin/spacing after (=at the right side of) each box.
+2026.06.25-12.00
+---------------------------------------------
+in DAG I want some more spacing also before the first box (only the first).
+2026.06.25-12.03
+---------------------------------------------
+slightly increase this first-box-only spacing in DAG.
+2026.06.25-12.05
+---------------------------------------------
+I've added a q-comm_template.qasm file under ./app dir (not under ./qasm dir), because it's not to be treated like all the other *.qasm files under ./qasm dir; q-comm_template.qasm is a template for all the teleportations to be injected by rule #6. For each inter-chunk dependency qubit (let's call it: q_SOURCE) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the q-comm_template.qasm code adapted with the actual name of q_SOURCE.
+This group of teleportations generated from q-comm_template.qasm should be injected right after the teleportation comment, and before the barrier that follows that comment.
+2026.06.25-12.xx
+---------------------------------------------
 
 ================ TODO:
+margins in DAG
+
+inject & adapt 1 instance of q-comm.qasm for each qubit inter-chunk dependency.
+
 better uint rewrite rule
 
 ############ UNDONE:
