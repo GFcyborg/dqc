@@ -183,6 +183,29 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIsNotNone(result.circuit)
         self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
 
+    def test_generic_pragma_does_not_break_runtime_execution(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[1] q;",
+            "bit[1] c;",
+            "pragma vendor.custom runtime pragma should be ignored by qiskit path",
+            "h q[0];",
+            "measure q[0] -> c[0];",
+        ])
+        rules = [
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            for rule in DEFAULT_RULES
+        ]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=8, timeout_s=2, execute_runtime=True)
+
+        self.assertIn("pragma vendor.custom", result.rewritten_source)
+        self.assertIsNotNone(result.circuit)
+        self.assertTrue(result.counts)
+        self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
+        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
+
     def test_bit_to_bool_cast_rewrites_scalar_and_array_element_conditions(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",

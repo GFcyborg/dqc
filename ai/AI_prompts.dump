@@ -728,13 +728,21 @@ if the user disables rule #8 (split-gen. teleports), then pragma lines should re
 the graceful handling of pragma expressions is not working: the circuit view shows "No circuit available" as soon as a pragma expression is introduced. Make sure this pragma-neutral logic is general, not only kicking in when rule #8 (split-gen. teleports) is disabled, because there can be all kinds of pragma expressions, not only the ones coming from splitted/chunk code (*.dqc). Qiskit circuit should always be pragma-resistent: find a way to ignore pragmas, and if an pragma-exception is thwrown by qiskit, handle it gracefully.
 2026.06.25-13.59
 ---------------------------------------------
+#############################################
+GitHub Copilot Pro+ activated
 
-
+pragma expressions are handled gracefully (ignored) only when they are split pragmas: but I asked for a more general pragma-robust handling. Extend the logic to cover any pragma expression.
+2026.06.25-14.18
+---------------------------------------------
 
 
 
 ================ TODO:
+when injecting adapt the q-comm_template.qasm to qubit var-names
+
 repeated/multi split-gen. teleports are re-using same var-names: fix it.
+
+don't teleport a multi-qubit array as 1 single qubit: it requires 1 teleportation for each qubit (not 1 single teleportation for all the qubits of the array).
 
 q-comm_template.qasm is a template for all the teleportations to be injected by rule #6.
 For each inter-chunk dependency qubit (represented by q_SOURCE in the template) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the template code adapted with the actual name of q_SOURCE: e.g. if the name of the qubit is myq[2], then q_SOURCE is to be 
