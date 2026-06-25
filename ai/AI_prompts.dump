@@ -734,12 +734,15 @@ GitHub Copilot Pro+ activated
 pragma expressions are handled gracefully (ignored) only when they are split pragmas: but I asked for a more general pragma-robust handling. Extend the logic to cover any pragma expression.
 2026.06.25-14.18
 ---------------------------------------------
-
+in order to support multiple split points, rule #8 (split-gen. teleports) should inject q-comm_template.qasm code in a more intelligent way, avoiding repeating the same varnames (q_SOURCE, q_epr, q_epr_TARGET, telept_Zcorrect_q, telept_Xcorrect_q) at each split point; instead rule #8 should append the split id number to the template varnames, e.g: if the split was "pragma dqc.v1.split id=7" , then the varnames should be q_SOURCE7, q_epr7, q_epr_TARGET7, ...
+2026.06.25-14.43
+---------------------------------------------
 
 
 ================ TODO:
 when injecting adapt the q-comm_template.qasm to qubit var-names
 
+rule #8 (split-gen. teleports) should inject q-comm_template.qasm code after adapting it in an intelligent context-sensitive way, according to the split dependency analysis: for each qubit to be exported into next chunk scope, the q_SOURCE should be ...
 repeated/multi split-gen. teleports are re-using same var-names: fix it.
 
 don't teleport a multi-qubit array as 1 single qubit: it requires 1 teleportation for each qubit (not 1 single teleportation for all the qubits of the array).

@@ -790,7 +790,24 @@ def add_split_markers(lines: list[str], split_lines: set[int]) -> str:
     return "\n".join(out)
 
 
-def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict[str, set[int]] | None, qubit_register_names: set[str] | None = None) -> list[str]:
+def _suffix_template_symbol_names(template_lines: list[str], split_id: int) -> list[str]:
+    suffix = str(split_id)
+    symbol_names = [
+        "q_SOURCE",
+        "q_epr_TARGET",
+        "q_epr",
+        "telept_Zcorrect_q",
+        "telept_Xcorrect_q",
+    ]
+    rewritten_lines = list(template_lines)
+    for symbol in symbol_names:
+        pattern = re.compile(rf"\b{re.escape(symbol)}\b")
+        replacement = f"{symbol}{suffix}"
+        rewritten_lines = [pattern.sub(replacement, line) for line in rewritten_lines]
+    return rewritten_lines
+
+
+def split_generated_teleportations(split_id: int, next_chunk_index: int, incoming_sources: dict[str, set[int]] | None, qubit_register_names: set[str] | None = None) -> list[str]:
     incoming_sources = incoming_sources or {}
     qubit_register_names = qubit_register_names or set()
     dependencies: list[tuple[int, str]] = []
@@ -816,6 +833,7 @@ def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict
     if template_path.exists():
         template_text = template_path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
         template_lines = template_text.splitlines()
+        template_lines = _suffix_template_symbol_names(template_lines, split_id)
         lines.extend(template_lines)
 
     lines.append(barrier_line)
@@ -910,11 +928,12 @@ def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list
     split_idx = 0
     for line_no, line in enumerate(lines, start=1):
         if split_idx < len(split_lines_sorted) and line_no == split_lines_sorted[split_idx]:
+            split_id = split_idx + 1
             next_chunk_index = split_idx + 2
             incoming_sources: dict[str, set[int]] = {}
             if 1 <= next_chunk_index <= len(chunk_flows):
                 incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
-            generated.extend(split_generated_teleportations(next_chunk_index, incoming_sources, qubit_register_names))
+            generated.extend(split_generated_teleportations(split_id, next_chunk_index, incoming_sources, qubit_register_names))
             split_idx += 1
         generated.append(line)
     dqc_qasm = "\n".join(generated)
