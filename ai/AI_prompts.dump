@@ -708,28 +708,39 @@ in DAG I want some more spacing also before the first box (only the first).
 slightly increase this first-box-only spacing in DAG.
 2026.06.25-12.05
 ---------------------------------------------
-I've added a q-comm_template.qasm file under ./app dir (not under ./qasm dir), because it's not to be treated like all the other *.qasm files under ./qasm dir; q-comm_template.qasm is a template for all the teleportations to be injected by rule #6. For each inter-chunk dependency qubit (let's call it: q_SOURCE) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the q-comm_template.qasm code adapted with the actual name of q_SOURCE.
-This group of teleportations generated from q-comm_template.qasm should be injected right after the teleportation comment, and before the barrier that follows that comment.
-2026.06.25-12.xx
+I've added a q-comm_template.qasm file under ./app dir (not under ./qasm dir), because it should be injected (as it is) by rule #6 (split-gen. teleportations) between the comment block and the barrier that follows it. All rule6-generated output is colored in orange, as usual.
+2026.06.25-12.47
+---------------------------------------------
+I want to move rule #6 (split-gen. teleportations) to be the last rule of the sequence.
+Also: when it's not active, rule #6 should have no effect of the code (any split pragma is left as it is, which is supported/ignored by standard QASM3 grammar, though I don't know how this is handled by qiskit).
+2026.06.25-13.04
+---------------------------------------------
+rule #6 (split-gen. teleportations) must be renumbered according to its new position in the sequence!
+The general rule of processing the [active] rewriting rules in their numbering order should always hold (test it).
+2026.06.25-13.09
+---------------------------------------------
+you left an hole in the rule numbering! renumber all rules so that no hole is left (and test it).
+2026.06.25-13.13
+---------------------------------------------
+if the user disables rule #8 (split-gen. teleports), then pragma lines should reach the rewritten code; in theory this should do no harm, since standard QASM3 grammar accepts and ignores all pragmas, but qiskit-qasm3-import does fail when handling pragmas. Find a way to handle pragma expressions in qiskit (without dropping them silently, as it does now). openqasm3 lib may help, as it ignores pragmas without throwing an exception.
+2026.06.25-13.45
+---------------------------------------------
+the graceful handling of pragma expressions is not working: the circuit view shows "No circuit available" as soon as a pragma expression is introduced. Make sure this pragma-neutral logic is general, not only kicking in when rule #8 (split-gen. teleports) is disabled, because there can be all kinds of pragma expressions, not only the ones coming from splitted/chunk code (*.dqc). Qiskit circuit should always be pragma-resistent: find a way to ignore pragmas, and if an pragma-exception is thwrown by qiskit, handle it gracefully.
+2026.06.25-13.59
 ---------------------------------------------
 
+
+
+
+
 ================ TODO:
-margins in DAG
+repeated/multi split-gen. teleports are re-using same var-names: fix it.
+
+q-comm_template.qasm is a template for all the teleportations to be injected by rule #6.
+For each inter-chunk dependency qubit (represented by q_SOURCE in the template) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the template code adapted with the actual name of q_SOURCE: e.g. if the name of the qubit is myq[2], then q_SOURCE is to be 
+This group of teleportations generated from q-comm_template.qasm should be injected right after the teleportation comment, and before the barrier that follows that comment. 
+
 
 inject & adapt 1 instance of q-comm.qasm for each qubit inter-chunk dependency.
 
 better uint rewrite rule
-
-############ UNDONE:
-when dealing with split code (it can be a qasm file where the user has marked a new split point by right-click, or a *.dqc file already having split pragmas), I want a visual representation of the resulting chunks, in the circuit drawing. Maybe we can add an overlay showing the chunk scopes represented as orange-bordered boxes framing their part of the circuit.
-2026.06.24-14.46
----------------------------------------------
-The orange-bordered boxes framing the chunk scopes of the circuit are not framing their part of the circuit: they are just splitting the overall circuit area in many equal-sized boxes, completely ignoring the underlying elements of the circuit.
-Also: the orange boxes should have some margin, both from the circuit image external borders, and among themselves (=the boxes).
-Also: all the chunk/scope boxes have the "Chunk N" labels in the top-left corner, in the same position, so they overlap (unreadable!).
-2026.06.24-15.02
----------------------------------------------
-still same problem with the chunk/scope boxes: their content is not matching the actual code.
-maybe we can start simpler: let's remove completely the boxes, and just add a spacer in the circuit, matching the position of the split pragmas (i.e. the teleportation comments in the rewritten code).
-2026.06.24-15.11
----------------------------------------------

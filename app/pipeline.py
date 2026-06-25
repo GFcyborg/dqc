@@ -138,10 +138,17 @@ DEFAULT_RULES = [
     RuleState(3, "Inject OPENQASM 3.1", "Insert a version header when the source does not declare one."),
     RuleState(4, "Inject stdgates", "Insert include \"stdgates.inc\" when it is missing."),
     RuleState(5, "Rename colliding gates", "Prefix custom gate definitions that collide with stdgates.inc."),
-    RuleState(6, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
-    RuleState(7, "Bit-to-bool Cast", "Rewrite `if(bit == 1)` to `if(bit)` and `if(bit == 0)` to `if(!bit)`."),
-    RuleState(8, "Uint Workaround", "Lower uint declarations/usages into importer-safe forms (const folding, loop unrolling, and guard simplification)."),
+    RuleState(6, "Bit-to-bool Cast", "Rewrite `if(bit == 1)` to `if(bit)` and `if(bit == 0)` to `if(!bit)`."),
+    RuleState(7, "Uint Workaround", "Lower uint declarations/usages into importer-safe forms (const folding, loop unrolling, and guard simplification)."),
+    RuleState(8, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
+
+
+def ordered_active_rule_ids(rules: list[RuleState]) -> list[int]:
+    rule_map = {rule.rule_id: rule.enabled for rule in rules}
+    if rule_map.get(0, False):
+        return []
+    return sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id != 0)
 
 INNER_SCOPE_BLOCKING_KINDS = {
     "QuantumGateDefinition",
@@ -481,6 +488,60 @@ def normalize_scalar_register_declarations(source: str) -> str:
 
     return "\n".join(normalized_lines)
 
+
+def strip_pragmas_for_qiskit(source: str) -> tuple[str, int]:
+    kept_lines: list[str] = []
+    removed = 0
+    for line in source.splitlines():
+        if line.strip().startswith("pragma "):
+            removed += 1
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines), removed
+
+
+def _strip_pragmas_via_openqasm_ast(source: str) -> tuple[str, int]:
+    try:
+        import openqasm3  # type: ignore
+
+        program = openqasm3.parse(source)
+        statements = list(getattr(program, "statements", []) or [])
+        kept: list[Any] = []
+        removed = 0
+        for stmt in statements:
+            if type(stmt).__name__ == "Pragma":
+                removed += 1
+            else:
+                kept.append(stmt)
+        if removed <= 0:
+            return source, 0
+        program.statements = kept
+        return openqasm3.dumps(program), removed
+    except Exception:
+        return source, 0
+
+
+def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple[Any, int]:
+    normalized_source = normalize_scalar_register_declarations(source)
+
+    line_stripped_source, removed_line_pragmas = strip_pragmas_for_qiskit(normalized_source)
+    try:
+        return qiskit_parse(line_stripped_source), removed_line_pragmas
+    except Exception as first_exc:
+        # If the source contains pragma expressions in forms that line-based stripping
+        # misses, retry by removing pragma AST nodes with openqasm3.
+        if "pragma" not in normalized_source.lower():
+            raise
+
+        ast_stripped_source, removed_ast_pragmas = _strip_pragmas_via_openqasm_ast(normalized_source)
+        if removed_ast_pragmas <= 0:
+            raise first_exc
+        try:
+            circuit = qiskit_parse(ast_stripped_source)
+            return circuit, max(removed_line_pragmas, removed_ast_pragmas)
+        except Exception:
+            raise first_exc
+
 def rewrite_bit_to_bool_cast(lines: list[str], enabled: bool, spans: list[RewriteSpan], source: str) -> list[str]:
     if not enabled:
         return lines
@@ -511,7 +572,7 @@ def rewrite_bit_to_bool_cast(lines: list[str], enabled: bool, spans: list[Rewrit
         rewritten_code = f"{prefix}{rewritten_expr}{suffix}"
         tail = line[len(code_only):] if len(line) >= len(code_only) else ""
         rewritten_line = f"{rewritten_code}{tail}"
-        spans.append(RewriteSpan(line_no, line, rewritten_expr, 7, "Rewrote bit comparison to a boolean cast."))
+        spans.append(RewriteSpan(line_no, line, rewritten_expr, 6, "Rewrote bit comparison to a boolean cast."))
         rewritten_lines.append(rewritten_line)
 
     return rewritten_lines
@@ -603,11 +664,11 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
             value_text = (const_decl.group("value") or "").strip()
             if re.fullmatch(r"\d+", value_text):
                 uint_consts[name] = (width, int(value_text))
-                spans.append(RewriteSpan(line_no, line, "", 8, f"Folded uint constant `{name}` for importer compatibility."))
+                spans.append(RewriteSpan(line_no, line, "", 7, f"Folded uint constant `{name}` for importer compatibility."))
                 line_no += 1
                 continue
             rewritten_decl = f"{const_decl.group('indent')}bit[{width}] {name};"
-            spans.append(RewriteSpan(line_no, line, rewritten_decl, 8, f"Rewrote uint declaration `{name}` to bit-array declaration."))
+            spans.append(RewriteSpan(line_no, line, rewritten_decl, 7, f"Rewrote uint declaration `{name}` to bit-array declaration."))
             rewritten_lines.append(rewritten_decl)
             line_no += 1
             continue
@@ -627,7 +688,7 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
                             emitted = f"{single_line_loop.group('indent')}{out_line.strip()}"
                             emitted_lines.append(emitted)
                             rewritten_lines.append(emitted)
-                spans.append(RewriteSpan(line_no, line, "\n".join(emitted_lines), 8, f"Unrolled uint loop `{loop_var}` with static range."))
+                spans.append(RewriteSpan(line_no, line, "\n".join(emitted_lines), 7, f"Unrolled uint loop `{loop_var}` with static range."))
                 line_no += 1
                 continue
 
@@ -654,7 +715,7 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
                             if out_line.strip():
                                 emitted_lines.append(out_line)
                                 rewritten_lines.append(out_line)
-                spans.append(RewriteSpan(line_no, line, "\n".join(emitted_lines), 8, f"Unrolled uint loop `{loop_var}` with static range."))
+                spans.append(RewriteSpan(line_no, line, "\n".join(emitted_lines), 7, f"Unrolled uint loop `{loop_var}` with static range."))
                 line_no = scan_line + 1
                 continue
 
@@ -665,7 +726,7 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
             tail = line[len(code_only):] if len(line) >= len(code_only) else ""
             folded_lines = [f"{folded_lines[0]}{tail}"]
         if rewritten != code_only or len(folded_lines) != 1 or folded_lines[0] != line:
-            spans.append(RewriteSpan(line_no, line, "\n".join(folded_lines), 8, "Applied uint compatibility rewrite."))
+            spans.append(RewriteSpan(line_no, line, "\n".join(folded_lines), 7, "Applied uint compatibility rewrite."))
         for out_line in folded_lines:
             if out_line.strip() or line.strip():
                 rewritten_lines.append(out_line)
@@ -693,7 +754,7 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         pragma_match = DQC_PRAGMA_PATTERN.match(line)
         if pragma_match:
-            matches[line_no].append((6, "Split-generated teleportations", 0, len(line)))
+            matches[line_no].append((8, "Split-generated teleportations", 0, len(line)))
 
         for start, end in comment_spans.get(line_no, []):
             matches[line_no].append((1, "Drop comments", start, end))
@@ -710,10 +771,10 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
             expr = cast_match.group("expr").strip()
             base_name = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", expr)
             if base_name and base_name.group(1) in bit_names:
-                matches[line_no].append((7, "Bit-to-bool Cast", cast_match.start("expr"), cast_match.end("value")))
+                matches[line_no].append((6, "Bit-to-bool Cast", cast_match.start("expr"), cast_match.end("value")))
 
         for uint_match in UINT_TOKEN_PATTERN.finditer(code_only):
-            matches[line_no].append((8, "Uint Workaround", uint_match.start(), uint_match.end()))
+            matches[line_no].append((7, "Uint Workaround", uint_match.start(), uint_match.end()))
 
     return matches
 
@@ -743,13 +804,20 @@ def split_generated_teleportations(next_chunk_index: int, incoming_sources: dict
     dependencies.sort(key=lambda item: (item[0], item[1]))
 
     barrier_line = f"barrier {', '.join(sorted(barrier_targets))};" if barrier_targets else "barrier;"
-    lines = [barrier_line, f"/* Teleporting qubits into chunk {next_chunk_index}:"]
+    lines = [barrier_line, f"/* Teleporting qubits into chunk {next_chunk_index}:" ]
     if dependencies:
         for source, name in dependencies:
             lines.append(f" * {name} from chunk {source}")
     else:
         lines.append(f" * no shared qubits from chunk {next_chunk_index - 1}")
     lines.append(" */")
+
+    template_path = Path(__file__).with_name("q-comm_template.qasm")
+    if template_path.exists():
+        template_text = template_path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        template_lines = template_text.splitlines()
+        lines.extend(template_lines)
+
     lines.append(barrier_line)
     return lines
 
@@ -1437,8 +1505,7 @@ def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | Non
     from qiskit import transpile
 
     start = time.perf_counter()
-    runtime_source = normalize_scalar_register_declarations(source)
-    circuit = qiskit_parse(runtime_source)
+    circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
     circuit = _bind_circuit_parameters(circuit, parameter_bindings)
     backend = AerSimulator()
     compiled = transpile(circuit, backend)
@@ -1456,7 +1523,7 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
         from qiskit import transpile
         from qiskit_aer import AerSimulator
 
-        circuit = qiskit_parse(normalize_scalar_register_declarations(runtime_source))
+        circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
         circuit = _bind_circuit_parameters(circuit, parameter_bindings)
         backend = AerSimulator()
         compiled = transpile(circuit, backend)
@@ -1468,9 +1535,8 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
 
 def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[int], parameter_bindings: dict[str, str] | None = None, shots: int = 1024, timeout_s: int = 10, execute_runtime: bool = True, distributed_nodes: int = 3) -> RewriteResult:
     parse = safe_import_qasm3()
-    rule_map = {rule.rule_id: rule.enabled for rule in rules}
-    bypass = rule_map.get(0, False)
-    active_rule_ids = [] if bypass else sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id != 0)
+    bypass = any(rule.rule_id == 0 and rule.enabled for rule in rules)
+    active_rule_ids = ordered_active_rule_ids(rules)
     spans: list[RewriteSpan] = []
     lines = normalize_lines(source)
     original_lines = list(lines)
@@ -1508,17 +1574,20 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
                     split_lines = shift_split_points(split_lines, insert_at + 1, 1)
             elif rule_id == 5:
                 rewritten = rename_colliding_gates(rewritten, True, spans)
-            elif rule_id == 7:
+            elif rule_id == 6:
                 rewritten = rewrite_bit_to_bool_cast(rewritten, True, spans, source)
-            elif rule_id == 8:
+            elif rule_id == 7:
                 rewritten = rewrite_uint_to_int(rewritten, True, spans)
     rewritten_source = "\n".join(rewritten)
     dqc_source = add_split_markers(normalize_lines(rewritten_source), split_lines)
     chunk_texts = split_dqc_chunks(dqc_source)
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows)
-    apply_rule_6 = 6 in active_rule_ids
-    display_rewritten_source = dqc_qasm if split_lines and apply_rule_6 else rewritten_source
+    apply_rule_8 = 8 in active_rule_ids
+    if split_lines:
+        display_rewritten_source = dqc_qasm if apply_rule_8 else dqc_source
+    else:
+        display_rewritten_source = rewritten_source
     chunk_graph = build_chunk_dependency_graph(chunk_flows)
     parse_tree = None
     issues: list[RewriteSpan] = []
@@ -1537,8 +1606,10 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         from qiskit import transpile
         from qiskit_aer import AerSimulator
 
-        runtime_source = dqc_qasm
-        circuit_result = qiskit_parse(normalize_scalar_register_declarations(runtime_source))
+        runtime_source = display_rewritten_source
+        circuit_result, removed_pragmas = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+        if removed_pragmas:
+            issues.append(RewriteSpan(1, "", "", 0, f"Runtime note: removed {removed_pragmas} pragma line(s) before qiskit parsing.", kind="info"))
         if parameter_bindings:
             circuit_result = _bind_circuit_parameters(circuit_result, parameter_bindings)
         if execute_runtime:

@@ -5,19 +5,34 @@ import unittest
 
 from pathlib import Path
 
-from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_points_from_source, substitute_inputs
+from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, ordered_active_rule_ids, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_points_from_source, substitute_inputs
 
 
 class RewriteSpanTests(unittest.TestCase):
     def test_split_generated_teleportations_rule_is_present(self) -> None:
         rule_names = {rule.rule_id: rule.name for rule in DEFAULT_RULES}
 
-        self.assertIn(6, rule_names)
-        self.assertEqual(rule_names[6], "Split-generated teleportations")
-        self.assertIn(7, rule_names)
-        self.assertEqual(rule_names[7], "Bit-to-bool Cast")
         self.assertIn(8, rule_names)
-        self.assertEqual(rule_names[8], "Uint Workaround")
+        self.assertEqual(rule_names[8], "Split-generated teleportations")
+        self.assertIn(6, rule_names)
+        self.assertEqual(rule_names[6], "Bit-to-bool Cast")
+        self.assertIn(7, rule_names)
+        self.assertEqual(rule_names[7], "Uint Workaround")
+
+    def test_rule_eight_is_listed_last_in_default_rules(self) -> None:
+        self.assertEqual(DEFAULT_RULES[-1].rule_id, 8)
+
+    def test_default_rule_ids_are_contiguous(self) -> None:
+        self.assertEqual([rule.rule_id for rule in DEFAULT_RULES], list(range(len(DEFAULT_RULES))))
+
+    def test_active_rules_are_processed_in_numeric_order(self) -> None:
+        rules = [
+            RuleState(8, "Split-generated teleportations", "", True),
+            RuleState(7, "Uint Workaround", "", True),
+            RuleState(6, "Bit-to-bool Cast", "", True),
+            RuleState(1, "Drop comments", "", True),
+        ]
+        self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8])
 
     def test_comment_drop_records_visible_and_invisible_spans(self) -> None:
         spans = []
@@ -67,11 +82,13 @@ class RewriteSpanTests(unittest.TestCase):
         )
         self.assertIn("/* Teleporting qubits into chunk 2:", dqc_qasm)
         self.assertRegex(dqc_qasm, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
-        self.assertRegex(dqc_qasm, r"\*/\nbarrier(?:\s+[^;]+)?;")
+        self.assertRegex(dqc_qasm, r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;")
+        self.assertIn("qubit q_SOURCE;", dqc_qasm)
         self.assertIn("* q from chunk 1", dqc_qasm)
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertRegex(result.rewritten_source, r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk 2:")
-        self.assertRegex(result.rewritten_source, r"\*/\nbarrier(?:\s+[^;]+)?;")
+        self.assertRegex(result.rewritten_source, r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;")
+        self.assertIn("qubit q_SOURCE;", result.rewritten_source)
         self.assertIn("* q from chunk 1", result.rewritten_source)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 4), 4)
         self.assertEqual(normalize_dqc_clicked_split_line(dqc_source, 5), 4)
@@ -97,7 +114,7 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
 
-    def test_original_rule_matches_include_split_pragma_as_rule_six(self) -> None:
+    def test_original_rule_matches_include_split_pragma_as_rule_eight(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -108,9 +125,9 @@ class RewriteSpanTests(unittest.TestCase):
         matches = original_line_rule_matches(source)
 
         self.assertIn(3, matches)
-        self.assertTrue(any(rule_id == 6 for rule_id, _, _, _ in matches[3]))
+        self.assertTrue(any(rule_id == 8 for rule_id, _, _, _ in matches[3]))
 
-    def test_rule_six_remaps_split_points_through_header_and_include_insertion(self) -> None:
+    def test_rule_eight_remaps_split_points_through_header_and_include_insertion(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -122,6 +139,49 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertIn("* q from chunk 1", result.rewritten_source)
+
+    def test_disabled_rule_eight_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[1] q;",
+            "bit[1] c;",
+            "h q[0];",
+            "measure q[0] -> c[0];",
+        ])
+        split_before_lines = {5}
+        rules = [
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            for rule in DEFAULT_RULES
+        ]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertIn("pragma dqc.v1.split id=1", result.rewritten_source)
+        self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
+        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
+        self.assertIsNotNone(result.circuit)
+
+    def test_generic_pragma_does_not_break_circuit_preview(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[1] q;",
+            "bit[1] c;",
+            "pragma vendor.custom this should be ignored by qiskit path",
+            "h q[0];",
+            "measure q[0] -> c[0];",
+        ])
+        rules = [
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            for rule in DEFAULT_RULES
+        ]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertIn("pragma vendor.custom", result.rewritten_source)
+        self.assertIsNotNone(result.circuit)
+        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
 
     def test_bit_to_bool_cast_rewrites_scalar_and_array_element_conditions(self) -> None:
         source = "\n".join([
@@ -138,7 +198,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn("if(c) {}", result.rewritten_source)
         self.assertIn("if(!mid[0]) {}", result.rewritten_source)
-        self.assertTrue(any(span.rule_id == 7 and "boolean cast" in span.message for span in result.spans))
+        self.assertTrue(any(span.rule_id == 6 and "boolean cast" in span.message for span in result.spans))
 
     def test_original_line_rule_matches_reports_plural_rule_references(self) -> None:
         source = "\n".join([
@@ -154,7 +214,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn(4, matches)
         self.assertTrue(any(rule_id == 1 and source.splitlines()[3][start:end] == "// trailing comment" for rule_id, _, start, end in matches[4]))
-        self.assertTrue(any(rule_id == 7 and source.splitlines()[3][start:end] == "c==1" for rule_id, _, start, end in matches[4]))
+        self.assertTrue(any(rule_id == 6 and source.splitlines()[3][start:end] == "c==1" for rule_id, _, start, end in matches[4]))
         self.assertIn(5, matches)
         self.assertTrue(any(rule_id == 5 and source.splitlines()[4][start:end] == "cx" for rule_id, _, start, end in matches[5]))
         self.assertIn(6, matches)
@@ -222,7 +282,7 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("x a[0];", preview.rewritten_source)
         self.assertIn("x b[0];", preview.rewritten_source)
         self.assertIsNotNone(preview.circuit)
-        self.assertTrue(any(span.rule_id == 8 for span in preview.spans))
+        self.assertTrue(any(span.rule_id == 7 for span in preview.spans))
 
         result = rewrite_and_analyze(source, rules, set(), {}, shots=32, timeout_s=10, execute_runtime=True)
         self.assertIsNotNone(result.circuit)
@@ -240,7 +300,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         result = rewrite_and_analyze(source, rules, set(), {}, shots=8, timeout_s=5, execute_runtime=False)
 
-        unroll_spans = [span for span in result.spans if span.rule_id == 8 and "Unrolled uint loop" in span.message]
+        unroll_spans = [span for span in result.spans if span.rule_id == 7 and "Unrolled uint loop" in span.message]
         self.assertTrue(unroll_spans)
         self.assertTrue(any(span.rewritten.strip() for span in unroll_spans))
         self.assertIn("x q[0];", result.rewritten_source)
@@ -257,9 +317,9 @@ class RewriteSpanTests(unittest.TestCase):
         matches = original_line_rule_matches(source)
 
         self.assertTrue(any(rule_id == 1 for rule_id, _, _, _ in matches[3]))
-        self.assertFalse(any(rule_id == 8 for rule_id, _, _, _ in matches[3]))
+        self.assertFalse(any(rule_id == 7 for rule_id, _, _, _ in matches[3]))
         self.assertTrue(any(rule_id == 1 for rule_id, _, _, _ in matches[4]))
-        self.assertFalse(any(rule_id == 8 for rule_id, _, _, _ in matches[4]))
+        self.assertFalse(any(rule_id == 7 for rule_id, _, _, _ in matches[4]))
 
     def test_uint_rule_does_not_rewrite_comment_only_uint_mentions(self) -> None:
         source = "\n".join([
@@ -273,7 +333,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         result = rewrite_and_analyze(source, rules, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
 
-        uint_spans = [span for span in result.spans if span.rule_id == 8]
+        uint_spans = [span for span in result.spans if span.rule_id == 7]
         self.assertFalse(uint_spans)
 
     def test_active_rules_apply_in_numeric_order_even_if_input_order_is_shuffled(self) -> None:
@@ -350,7 +410,8 @@ class RewriteSpanTests(unittest.TestCase):
 
         rewritten = result.rewritten_source
         self.assertGreaterEqual(len(re.findall(r"barrier(?:\s+[^;]+)?;\n/\* Teleporting qubits into chunk", rewritten)), 2)
-        self.assertGreaterEqual(len(re.findall(r"\*/\nbarrier(?:\s+[^;]+)?;", rewritten)), 2)
+        self.assertGreaterEqual(len(re.findall(r"\*/\n(?:.*\n)*?barrier(?:\s+[^;]+)?;", rewritten)), 2)
+        self.assertGreaterEqual(rewritten.count("qubit q_SOURCE;"), 2)
         self.assertIn("/* Teleporting qubits into chunk 2:", rewritten)
         self.assertIn("* anc from chunk 1", rewritten)
         self.assertIn("/* Teleporting qubits into chunk 3:", rewritten)

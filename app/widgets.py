@@ -49,48 +49,56 @@ def _is_split_generated_barrier_line(lines: list[str], index: int) -> bool:
         return False
     if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
         return False
+    return (index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk ")) or (index in _split_generated_block_line_indexes(lines))
 
-    if index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk "):
-        return True
 
-    if index <= 0 or lines[index - 1].strip() != "*/":
-        return False
-
-    scan = index - 1
-    while scan >= 0:
-        stripped = lines[scan].strip()
-        if not stripped:
-            return False
-        if stripped.startswith("/* Teleporting qubits into chunk "):
-            return True
-        if stripped == "*/" or stripped.startswith("*"):
-            scan -= 1
+def _split_generated_block_line_indexes(lines: list[str]) -> set[int]:
+    indexes: set[int] = set()
+    i = 0
+    n = len(lines)
+    while i < n:
+        if not lines[i].startswith("/* Teleporting qubits into chunk "):
+            i += 1
             continue
-        return False
-    return False
+
+        if i > 0 and re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[i - 1]):
+            indexes.add(i - 1)
+
+        while i < n:
+            indexes.add(i)
+            if lines[i].strip() == "*/":
+                i += 1
+                break
+            i += 1
+
+        while i < n:
+            indexes.add(i)
+            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[i]):
+                i += 1
+                break
+            i += 1
+    return indexes
 
 
 def _has_split_generated_barriers(source: str | None) -> bool:
     if not source:
         return False
     lines = str(source).splitlines()
-    for index in range(len(lines)):
-        if _is_split_generated_barrier_line(lines, index):
-            return True
-    return False
+    return any(_is_split_generated_barrier_line(lines, index) for index in range(len(lines)))
 
 
 def _split_generated_barrier_ordinals(source: str | None) -> set[int]:
     if not source:
         return set()
     lines = str(source).splitlines()
+    split_generated_indexes = _split_generated_block_line_indexes(lines)
     ordinals: set[int] = set()
     barrier_ordinal = 0
     for index in range(len(lines)):
         if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
             continue
         barrier_ordinal += 1
-        if _is_split_generated_barrier_line(lines, index):
+        if index in split_generated_indexes:
             ordinals.add(barrier_ordinal)
     return ordinals
 
@@ -718,7 +726,7 @@ class HtmlCodeView(QTextBrowser):
         visible_lines: set[int] = set()
         partial_highlights: dict[int, list[str]] = {}
         snippet_tooltips: dict[str, list[str]] = {}
-        teleport_tooltip = "Rule 6: split pragma rewritten into teleportation comment block"
+        teleport_tooltip = "Rule 8: split pragma rewritten into teleportation comment block"
         for span in spans:
             rewritten = str(getattr(span, "rewritten", ""))
             if not rewritten.strip():
@@ -745,26 +753,16 @@ class HtmlCodeView(QTextBrowser):
                 if normalized:
                     snippet_tooltips.setdefault(normalized, []).append(tooltip)
         lines = rewritten_source.splitlines()
+        split_generated_indexes = _split_generated_block_line_indexes(lines)
+        for idx in split_generated_indexes:
+            line_no = idx + 1
+            self._teleport_lines.add(line_no)
+            tooltip_map.setdefault(line_no, []).append(teleport_tooltip)
+            visible_lines.add(line_no)
+
         line_index = 0
         while line_index < len(lines):
             line = lines[line_index]
-            if _is_split_generated_barrier_line(lines, line_index):
-                self._teleport_lines.add(line_index + 1)
-                tooltip_map.setdefault(line_index + 1, []).append(teleport_tooltip)
-                visible_lines.add(line_index + 1)
-                line_index += 1
-                continue
-            if line.startswith("/* Teleporting qubits into chunk "):
-                while line_index < len(lines):
-                    self._teleport_lines.add(line_index + 1)
-                    tooltip_map.setdefault(line_index + 1, []).append(teleport_tooltip)
-                    visible_lines.add(line_index + 1)
-                    if lines[line_index].strip() == "*/":
-                        line_index += 1
-                        break
-                    line_index += 1
-                line_index += 1
-                continue
             snippet = line.strip()
             if snippet and snippet in snippet_tooltips:
                 visible_lines.add(line_index + 1)
@@ -884,7 +882,7 @@ class RulePanel(QFrame):
             row_layout.setSpacing(8)
             check = QCheckBox(f"{rule.rule_id}. {rule.name}")
             check.setChecked(rule.enabled)
-            if rule.rule_id == 6:
+            if rule.rule_id == 8:
                 check.setStyleSheet("color: #0f172a; font-weight: bold; text-decoration: underline;")
             else:
                 check.setStyleSheet("color: #0f172a;")
@@ -905,11 +903,11 @@ class RulePanel(QFrame):
             check.blockSignals(False)
             if bypass and rule_id != 0:
                 check.setEnabled(False)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 6 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 8 else ""
                 check.setStyleSheet(f"color: #94a3b8;{extra}")
             else:
                 check.setEnabled(True)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 6 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 8 else ""
                 check.setStyleSheet(f"color: #0f172a;{extra}")
 
 
