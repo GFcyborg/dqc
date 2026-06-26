@@ -806,15 +806,17 @@ remove initial and final barriers when injecting split-gen. teleportation blocks
 default timeout to be set to 20 sec
 2026.06.25-23.14
 ---------------------------------------------
+make sure the q-comm template parsing is robust against template modifications; create a unit test and a short help page (under the Help menu) to document which patterns of the template are expected by the app logic (and should be preserved when editing it).
+2026.06.26-09.10
+---------------------------------------------
+the coloring of rules' outputs/snippets is not working well: many of the to-be-green code is colored in orange, even if it's not split-generated (not rule #8). Fix it.
+2026.06.26-09.20
+---------------------------------------------
 
 
 
 
 ================ TODO:
-
-
-make sure the template parsing is robust against template modifications; create a help page to document which patterns of the template are expected and should be preserved when editing it.
-
 When executing in split contexts (multi-chunks), make sure (and test) that each qubit lives only in 1 place (= 1 scope = 1 chunk) at a time (i.e. respect quantum no-cloning), even if it's been aliased (like aliased variable in qiskit-example.dqc): in a monolithic context (=1 chunk) this property is enforced directly/automatically by qiskit, but in a multi-chunk context this enforcement cannot be done by qiskit (because from its point of view the code is always run in single runtime context: we are simulating a multi-QPUs network, but the simulation lives only at the logical level, in QASM3 language).
 
 rule #8 (split-gen. teleports) should inject q-comm_template.qasm code after adapting it in an intelligent context-sensitive way, according to the split dependency analysis: for each qubit to be exported into next chunk scope, the q_SOURCE should be ...

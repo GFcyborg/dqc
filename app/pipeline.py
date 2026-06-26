@@ -79,6 +79,54 @@ AUTO_PARAM_DEFAULT_VALUE = (math.pi / 2.0) - 1.0
 OPENQASM_3_1_HEADER_RE = re.compile(r"(?im)^\s*OPENQASM\s+3\.1\b")
 STDGATES_INCLUDE_RE = re.compile(r'(?im)^\s*include\s+"stdgates\.inc"\s*;\s*$')
 
+# Sentinel appended at the end of every teleport block when rendering for the
+# GUI Rewritten tab.  Never written to disk.  Used by widgets.py to know
+# where the orange-coloured teleport block ends, so that subsequent lines
+# from other rewriting rules are correctly coloured green.
+DQC_TELEPORT_BLOCK_END_SENTINEL = "// <dqc:teleport-end>"
+
+# ---------------------------------------------------------------------------
+# q-comm_template.qasm – required identifiers and validation
+# ---------------------------------------------------------------------------
+
+# Identifiers that MUST appear in the template and are renamed during
+# adaptation.  If any of these are missing or renamed in the template file
+# the generated teleportation code will be silently incorrect.
+QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS: tuple[str, ...] = (
+    "q_SOURCE",           # source qubit placeholder – declaration is removed;
+                          #   all remaining uses are replaced with the actual qubit name
+    "q_epr",              # local EPR qubit       → renamed to {qubit}_epr_{split_id}
+    "q_epr_TARGET",       # remote EPR target     → renamed to {qubit}_epr_TARGET_{split_id}
+    "telept_Zcorrect_q",  # Z-correction cbit     → renamed to telept_Zcorrect_{qubit}_{split_id}
+    "telept_Xcorrect_q",  # X-correction cbit     → renamed to telept_Xcorrect_{qubit}_{split_id}
+)
+
+# The one line that must appear verbatim (modulo surrounding whitespace) so
+# that the adaptation step can locate and drop the source-qubit declaration.
+QCOMM_TEMPLATE_SOURCE_DECL_RE = re.compile(r"^\s*qubit\s+q_SOURCE\s*;\s*$", re.MULTILINE)
+
+
+def validate_qcomm_template(template_text: str) -> list[str]:
+    """Return a list of human-readable errors found in *template_text*.
+
+    An empty list means the template is well-formed and the adaptation logic
+    in :func:`split_generated_teleportations` will behave correctly.  A
+    non-empty list identifies which required patterns are absent so the user
+    can restore them before saving the file.
+    """
+    errors: list[str] = []
+    if not QCOMM_TEMPLATE_SOURCE_DECL_RE.search(template_text):
+        errors.append(
+            "Missing required declaration line: 'qubit q_SOURCE;'  "
+            "(source-qubit placeholder; this line is removed and all other "
+            "uses of q_SOURCE are replaced with the actual qubit name)"
+        )
+    for ident in QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS:
+        pattern = re.compile(rf"\b{re.escape(ident)}\b")
+        if not pattern.search(template_text):
+            errors.append(f"Missing required identifier: '{ident}'")
+    return errors
+
 
 @dataclass(slots=True)
 class RewriteSpan:
@@ -815,10 +863,9 @@ def _suffix_template_symbol_names(template_lines: list[str], split_id: int, sour
 def _adapt_template_for_dependency(template_lines: list[str], split_id: int, source_qubit: str) -> list[str]:
     rewritten_lines = _suffix_template_symbol_names(template_lines, split_id, source_qubit)
     output: list[str] = []
-    source_decl_pattern = re.compile(r"^\s*qubit\s+q_SOURCE\s*;\s*$")
     source_symbol_pattern = re.compile(r"\bq_SOURCE\b")
     for line in rewritten_lines:
-        if source_decl_pattern.match(line):
+        if QCOMM_TEMPLATE_SOURCE_DECL_RE.match(line):
             continue
         output.append(source_symbol_pattern.sub(source_qubit, line))
     return output
@@ -830,6 +877,8 @@ def split_generated_teleportations(
     incoming_sources: dict[str, set[int]] | None,
     qubit_register_names: set[str] | None = None,
     qubit_register_sizes: dict[str, int] | None = None,
+    *,
+    for_display: bool = False,
 ) -> list[str]:
     incoming_sources = incoming_sources or {}
     qubit_register_names = qubit_register_names or set()
@@ -865,10 +914,21 @@ def split_generated_teleportations(
     template_path = Path(__file__).with_name("q-comm_template.qasm")
     if template_path.exists() and dependency_names:
         template_text = template_path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        template_errors = validate_qcomm_template(template_text)
+        if template_errors:
+            import sys
+            print(
+                "WARNING: q-comm_template.qasm has validation errors; "
+                "teleportation output may be incorrect:\n  "
+                + "\n  ".join(template_errors),
+                file=sys.stderr,
+            )
         template_lines = template_text.splitlines()
         for dependency_name in dependency_names:
             adapted = _adapt_template_for_dependency(template_lines, split_id, dependency_name.strip())
             lines.extend(adapted)
+    if for_display:
+        lines.append(DQC_TELEPORT_BLOCK_END_SENTINEL)
     return lines
 
 
@@ -974,7 +1034,7 @@ def _expand_dependency_qubit_names(name: str, qubit_register_sizes: dict[str, in
     return [f"{normalized}[{index}]" for index in range(size)]
 
 
-def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list[ChunkFlow] | None = None) -> tuple[str, str]:
+def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list[ChunkFlow] | None = None, *, for_display: bool = False) -> tuple[str, str]:
     lines = normalize_lines(source)
     dqc_source = add_split_markers(lines, split_lines)
     qubit_register_names = extract_qubit_register_names(source)
@@ -1001,6 +1061,7 @@ def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list
                     incoming_sources,
                     qubit_register_names,
                     qubit_register_sizes,
+                    for_display=for_display,
                 )
             )
             split_idx += 1
@@ -1740,7 +1801,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     dqc_source = add_split_markers(normalize_lines(rewritten_source), split_lines)
     chunk_texts = split_dqc_chunks(dqc_source)
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source)
-    _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows)
+    _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
     apply_rule_8 = 8 in active_rule_ids
     if split_lines:
         display_rewritten_source = dqc_qasm if apply_rule_8 else dqc_source

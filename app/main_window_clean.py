@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 from .pipeline import (
     DEFAULT_RULES,
+    QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS,
     RuleState,
     build_ast_graph,
     build_distributed_qasm,
@@ -55,6 +56,7 @@ from .pipeline import (
     smoke_test_hadamard,
     summary_text,
     run_runtime_counts,
+    validate_qcomm_template,
     write_text,
 )
 from .widgets import CircuitView, CodeEditor, DiagnosticsView, GraphTab, HtmlCodeView, ParseTreeView, RulePanel, QiskitDagTab, ChunkDagTab, QubitInteractionTab
@@ -691,6 +693,9 @@ class MainWindow(QMainWindow):
         bib_menu = QMenu("Bibliography", self)
         help_menu.addMenu(bib_menu)
         self._populate_bibliography_menu(bib_menu)
+        qcomm_action = QAction("Q-comm Template Guide", self)
+        qcomm_action.triggered.connect(self._show_qcomm_template_guide)
+        help_menu.addAction(qcomm_action)
 
     def _populate_examples_menu(self, menu: QMenu, root: Path) -> None:
         menu.clear()
@@ -715,6 +720,117 @@ class MainWindow(QMainWindow):
             action = QAction(url, self)
             action.triggered.connect(lambda checked=False, target=url: QDesktopServices.openUrl(QUrl(target)))
             menu.addAction(action)
+
+    def _show_qcomm_template_guide(self) -> None:
+        """Show a help dialog documenting the q-comm_template.qasm contract."""
+        template_path = Path(__file__).with_name("q-comm_template.qasm")
+
+        # Read current template and run validation
+        if template_path.exists():
+            template_text = template_path.read_text(encoding="utf-8")
+            errors = validate_qcomm_template(template_text)
+        else:
+            template_text = ""
+            errors = [f"Template file not found: {template_path}"]
+
+        ident_rows = "".join(
+            f"<tr>"
+            f"<td style='padding:4px 10px 4px 0; font-family:monospace; white-space:nowrap; color:#1e3a8a;'><b>{ident}</b></td>"
+            f"<td style='padding:4px 0;'>{desc}</td>"
+            f"</tr>"
+            for ident, desc in [
+                ("q_SOURCE",
+                 "Placeholder for the qubit being teleported.  "
+                 "The line <code>qubit q_SOURCE;</code> is <em>removed</em> "
+                 "during adaptation (the qubit is already declared upstream).  "
+                 "Every other occurrence is replaced with the actual qubit name."),
+                ("q_epr",
+                 "Local EPR qubit allocated for entanglement.  "
+                 "Renamed to <code>{qubit}_epr_{split_id}</code> to avoid name collisions "
+                 "when multiple split points are present."),
+                ("q_epr_TARGET",
+                 "Remote EPR qubit (the entangled partner received by the next chunk).  "
+                 "Renamed to <code>{qubit}_epr_TARGET_{split_id}</code>."),
+                ("telept_Zcorrect_q",
+                 "Classical bit holding the Z-basis measurement result used for correction.  "
+                 "Renamed to <code>telept_Zcorrect_{qubit}_{split_id}</code>."),
+                ("telept_Xcorrect_q",
+                 "Classical bit holding the X-basis measurement result used for correction.  "
+                 "Renamed to <code>telept_Xcorrect_{qubit}_{split_id}</code>."),
+            ]
+        )
+
+        status_html: str
+        if errors:
+            items = "".join(f"<li style='color:#b91c1c;'>{e}</li>" for e in errors)
+            status_html = (
+                f"<p style='color:#b91c1c;'><b>⚠ Template validation failed "
+                f"({len(errors)} error(s)):</b></p><ul>{items}</ul>"
+                f"<p>Restore the missing patterns before saving the file "
+                f"to ensure teleportation output is correct.</p>"
+            )
+        else:
+            status_html = "<p style='color:#15803d;'><b>✓ Template is valid.</b></p>"
+
+        html = f"""
+<html><body style='font-family:sans-serif; font-size:13px; margin:12px;'>
+<h2 style='margin-top:0;'>Q-comm Template Guide</h2>
+
+<p>The file <code style='color:#1e3a8a;'>{template_path.name}</code>
+(located at <code>{template_path}</code>) defines a single quantum teleportation
+circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#8 (Split-generated teleportations)</b>
+reads this template and injects one adapted copy for <em>each qubit dependency</em>
+that must cross a split-point boundary.</p>
+
+<h3>Adaptation contract</h3>
+<p>The following identifiers are required.  Do <em>not</em> rename or remove them
+when editing the template; you may freely add comments, adjust gate sequences,
+or reorder lines as long as these identifiers are kept:</p>
+
+<table style='border-collapse:collapse; width:100%;'>
+{ident_rows}
+</table>
+
+<h3>Required declaration line</h3>
+<p>The line</p>
+<pre style='background:#f1f5f9; padding:6px 10px; border-radius:4px;'>qubit q_SOURCE;</pre>
+<p>must appear verbatim (leading/trailing whitespace is ignored).
+It is <em>removed</em> from each adapted copy because the source qubit is
+already declared in the surrounding chunk code.</p>
+
+<h3>Name-mangling rules</h3>
+<p>For a dependency qubit named <code>w</code> at split&nbsp;<code>N</code>:</p>
+<ul>
+  <li><code>q_epr</code> &rarr; <code>w_epr_N</code></li>
+  <li><code>q_epr_TARGET</code> &rarr; <code>w_epr_TARGET_N</code></li>
+  <li><code>telept_Zcorrect_q</code> &rarr; <code>telept_Zcorrect_w_N</code></li>
+  <li><code>telept_Xcorrect_q</code> &rarr; <code>telept_Xcorrect_w_N</code></li>
+  <li><code>q_SOURCE</code> &rarr; <code>w</code>&nbsp;(the actual qubit name)</li>
+</ul>
+<p>For an array element such as <code>w[1]</code> the brackets are stripped:
+<code>w1_epr_N</code>, <code>telept_Zcorrect_w1_N</code>, etc.</p>
+
+<h3>Current template status</h3>
+{status_html}
+</body></html>
+"""
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Q-comm Template Guide")
+        dlg.resize(680, 540)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(0, 0, 0, 8)
+
+        browser = QTextBrowser(dlg)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(html)
+        layout.addWidget(browser)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close, dlg)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        dlg.exec()
 
     def _schedule_refresh(self) -> None:
         self._refresh_timer.start(250)

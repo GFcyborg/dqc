@@ -34,6 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL
+
 
 def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, font: QFont | None = None):
     item = scene.addText(text)
@@ -64,6 +66,7 @@ def _split_generated_block_line_indexes(lines: list[str]) -> set[int]:
         if i > 0 and re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[i - 1]):
             indexes.add(i - 1)
 
+        # Consume the comment block (up to and including */)
         while i < n:
             indexes.add(i)
             if lines[i].strip() == "*/":
@@ -71,11 +74,19 @@ def _split_generated_block_line_indexes(lines: list[str]) -> set[int]:
                 break
             i += 1
 
+        # Consume template code lines until the sentinel (or a barrier, for
+        # backwards compatibility with files that still contain barriers).
         while i < n:
-            indexes.add(i)
-            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[i]):
+            line = lines[i]
+            if line.strip() == DQC_TELEPORT_BLOCK_END_SENTINEL.strip():
+                indexes.add(i)
                 i += 1
                 break
+            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
+                indexes.add(i)
+                i += 1
+                break
+            indexes.add(i)
             i += 1
     return indexes
 
@@ -839,6 +850,11 @@ class HtmlCodeView(QTextBrowser):
                 continue
             line_no = line_index + 1
             escaped = self._html_escape(line)
+            if line.strip() == DQC_TELEPORT_BLOCK_END_SENTINEL.strip():
+                # Sentinel is a display-only marker; skip it so it doesn't
+                # appear in the Rewritten code view.
+                line_index += 1
+                continue
             if line_no in self._teleport_lines:
                 decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
             elif line_no in partial_highlights:
