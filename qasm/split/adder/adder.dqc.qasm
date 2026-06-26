@@ -17,6 +17,24 @@ gate unmaj a, b, c {
 }
 
 qubit[1] cin;
+/* Teleporting qubits into chunk 2:
+ * cin from chunk 1
+ */
+qubit cin_epr_1;
+qubit cin_epr_TARGET_1;
+bit telept_Zcorrect_cin_1;
+bit telept_Xcorrect_cin_1;
+reset cin_epr_1;
+reset cin_epr_TARGET_1;
+h cin_epr_1;
+cx cin_epr_1, cin_epr_TARGET_1;
+cx cin, cin_epr_1;
+h cin;
+telept_Zcorrect_cin_1 = measure cin;
+telept_Xcorrect_cin_1 = measure cin_epr_1;
+if(telept_Zcorrect_cin_1) z cin_epr_TARGET_1;
+if(telept_Xcorrect_cin_1) x cin_epr_TARGET_1;
+// cin teleported into cin_epr_TARGET_1
 qubit[4] a;
 qubit[4] b;
 qubit[1] cout;
@@ -28,26 +46,12 @@ reset cin;
 reset a;
 reset b;
 reset cout;
-/* Teleporting qubits into chunk 2:
- * a from chunk 1
- * a_in from chunk 1
- * b from chunk 1
- * b_in from chunk 1
- * uint from chunk 1
- */
 
 // set input states
 for uint i in [0: 3] {
   if(bool(a_in[i])) x a[i];
   if(bool(b_in[i])) x b[i];
 }
-/* Teleporting qubits into chunk 3:
- * a from chunk 2
- * b from chunk 2
- * i from chunk 2
- * in from chunk 2
- * uint from chunk 2
- */
 // add a to b, storing result in b
 majority cin[0], b[0], a[0];
 for uint i in [0: 2] { majority a[i], b[i + 1], a[i + 1]; }

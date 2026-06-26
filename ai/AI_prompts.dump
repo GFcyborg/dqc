@@ -812,6 +812,14 @@ make sure the q-comm template parsing is robust against template modifications; 
 the coloring of rules' outputs/snippets is not working well: many of the to-be-green code is colored in orange, even if it's not split-generated (not rule #8). Fix it.
 2026.06.26-09.20
 ---------------------------------------------
+by reading some of your chatbot inner-comments, I noticed you wrote "Let me verify the current structure of a *.dqc.qasm file to see what the teleport block currently looks like". this is concerning to me, because on the disk you can find *.dqc.qasm leftover files from previous app versions, and those files do not represent the "current structure" !
+I am wondering whether you inferenced some strange/wrong conclusions from those out-of-date files ...
+Should I just delete all *.dqc.qasm files, so that this inferencing does not happen again?
+2026.06.26-10.29
+
+[answer: yes, delete them!]
+---------------------------------------------
+
 
 
 

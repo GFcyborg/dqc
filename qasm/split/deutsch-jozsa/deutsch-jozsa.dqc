@@ -15,7 +15,6 @@ ctrl(3) @ x q[0], q[1], q[2], q[3];
 x q[2];                          // ripristino q2
 
 barrier q;
-pragma dqc.v1.split id=1
 
 // ── Blocco 2 : scatta per (q0=0, q1=0, q2=0) ─────────────────────────────
 x q[0];
@@ -27,7 +26,6 @@ x q[1];
 x q[2];
 
 barrier q;
-pragma dqc.v1.split id=2
 
 // ── Blocco 3 : scatta per (q0=0, q1=1, q2=0) ─────────────────────────────
 x q[0];
@@ -37,14 +35,13 @@ x q[0];
 x q[2];
 
 barrier q;
-pragma dqc.v1.split id=3
 
 // ── Blocco 4 : scatta per (q0=1, q1=0, q2=1) ─────────────────────────────
 x q[1];
 ctrl(3) @ x q[0], q[1], q[2], q[3];
+pragma dqc.v1.split id=1
 x q[1];
 
 barrier q;
-pragma dqc.v1.split id=4
 
 c = measure q;
