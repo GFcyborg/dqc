@@ -855,6 +855,11 @@ rule #8 (array-index set) should be renamed in the Compatibility Rules view, fro
 upgrade to qiskit 2.5.0 (just released!)
 2026.07.03-16.26
 ---------------------------------------------
+make sure that rewriting rules are only applied when active/checked, and skipped/ignored when unchecked.
+Also make sure that they get applied in sequence and in a pipeline (each rule takes as input the output of the previous active rule).
+2026.07.03-16.36
+---------------------------------------------
+
 
 
 
@@ -862,8 +867,6 @@ upgrade to qiskit 2.5.0 (just released!)
 the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
 
 also: qiskit-qasm3-import should support/accept/recognize the "++" concatenation syntax in let-alias expressions, according to: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#5
-
-check that rules are only executed when active/checked, and skipped/ignored when unchecked.
 
 the analysis of dependencies is not working well as it wrongly teleports the same qubit from the same source to different destinations, and this is not possibile as it breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 chunks depend on the same source qubit, then it must be moved in a sequence (first a chunk imports the qubit from the source, and then it exports that qubit into the next chunk). Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
 

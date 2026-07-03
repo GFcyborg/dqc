@@ -37,6 +37,47 @@ class RewriteSpanTests(unittest.TestCase):
         ]
         self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8, 9])
 
+    def test_unchecked_rules_are_skipped(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            'include "stdgates.inc";',
+            "qubit[1] q;",
+            "// full-line comment should remain when rule 1 is disabled",
+            "x q[0];",
+        ])
+        rules = [
+            RuleState(0, "Bypass all rewrites", "", False),
+            RuleState(1, "Drop comments", "", False),
+            RuleState(2, "Drop blank lines", "", True),
+        ]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertIn("// full-line comment should remain when rule 1 is disabled", result.rewritten_source)
+        self.assertFalse(any(span.rule_id == 1 for span in result.spans))
+
+    def test_active_rules_apply_as_pipeline_on_previous_rule_output(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            'include "stdgates.inc";',
+            "qubit[1] q;",
+            "// this line becomes blank after rule 1",
+            "x q[0];",
+        ])
+        rules = [
+            RuleState(0, "Bypass all rewrites", "", False),
+            RuleState(2, "Drop blank lines", "", True),
+            RuleState(1, "Drop comments", "", True),
+        ]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
+        rewritten_lines = result.rewritten_source.splitlines()
+
+        # Rule 1 runs first (by numeric order), producing a blank line; rule 2 then removes it.
+        self.assertNotIn("", rewritten_lines)
+        self.assertNotIn("// this line becomes blank after rule 1", result.rewritten_source)
+        self.assertTrue(any(span.rule_id == 1 for span in result.spans))
+
     def test_comment_drop_records_visible_and_invisible_spans(self) -> None:
         spans = []
         rewritten = rewrite_comments_and_blanks(["x q[0]; // keep this comment"], True, False, spans)
