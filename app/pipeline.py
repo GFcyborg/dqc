@@ -71,6 +71,12 @@ UINT_DECL_PATTERN = re.compile(r"^(?P<indent>\s*)uint\[(?P<width>\d+)\]\s+(?P<na
 FOR_UINT_RANGE_PATTERN = re.compile(r"^(?P<indent>\s*)for\s+uint\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s+in\s*\[(?P<range>[^\]]+)\]\s*\{\s*(?P<body>.*)\s*\}\s*(?://.*)?$")
 FOR_UINT_START_PATTERN = re.compile(r"^(?P<indent>\s*)for\s+uint\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s+in\s*\[(?P<range>[^\]]+)\]\s*\{\s*(?://.*)?$")
 IF_CONST_BOOL_PATTERN = re.compile(r"^(?P<indent>\s*)if\s*\(\s*(?P<bool>true|false)\s*\)\s*(?P<tail>.*)$", re.IGNORECASE)
+INDEX_SET_CONCAT_PATTERN = re.compile(
+    r"(?P<base>\b[A-Za-z_][A-Za-z0-9_]*)\s*\[\s*\{\s*(?P<indices>[^\{\}\]]+?)\s*\}\s*\](?P<suffix>(?:\s*\[[^\]]+\])*)"
+)
+GATE_CALL_LINE_PATTERN = re.compile(
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*@\s*)*(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s*\([^;]*\))?\s+[^;]+;\s*$"
+)
 SCALAR_QUBIT_DECL_PATTERN = re.compile(r"^(?P<indent>\s*)qubit\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*;(?P<suffix>\s*(?://.*)?)$")
 SCALAR_BIT_DECL_PATTERN = re.compile(r"^(?P<indent>\s*)bit\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*;(?P<suffix>\s*(?://.*)?)$")
 IF_SCALAR_BIT_COND_PATTERN = re.compile(r"^(?P<prefix>\s*if\s*\(\s*)(?P<expr>!?\s*[A-Za-z_][A-Za-z0-9_]*)(?P<suffix>\s*\)\s*.*)$")
@@ -188,7 +194,8 @@ DEFAULT_RULES = [
     RuleState(5, "Rename colliding gates", "Prefix custom gate definitions that collide with stdgates.inc."),
     RuleState(6, "Bit-to-bool Cast", "Rewrite `if(bit == 1)` to `if(bit)` and `if(bit == 0)` to `if(!bit)`."),
     RuleState(7, "Uint Workaround", "Lower uint declarations/usages into importer-safe forms (const folding, loop unrolling, and guard simplification)."),
-    RuleState(8, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
+    RuleState(8, "Array-index set ++concatenation", "Rewrite `q[{a, b, ...}]` into explicit concatenation form for importer compatibility."),
+    RuleState(9, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
 
 
@@ -569,6 +576,56 @@ def _strip_pragmas_via_openqasm_ast(source: str) -> tuple[str, int]:
         return source, 0
 
 
+def _concat_expr_to_index_set(expr: str) -> str | None:
+    parts = [part.strip() for part in expr.split("++")]
+    if len(parts) < 2:
+        return None
+
+    base_name: str | None = None
+    indices: list[str] = []
+    part_pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*([^\]]+)\s*\]$")
+    for part in parts:
+        match = part_pattern.match(part)
+        if not match:
+            return None
+        name = match.group(1)
+        index = match.group(2).strip()
+        if not index:
+            return None
+        if base_name is None:
+            base_name = name
+        elif name != base_name:
+            return None
+        indices.append(index)
+
+    if base_name is None:
+        return None
+    return f"{base_name}[{{{', '.join(indices)}}}]"
+
+
+def restore_concat_aliases_for_qiskit(source: str) -> str:
+    restored_lines: list[str] = []
+    for line in source.splitlines():
+        match = re.match(
+            r"^(?P<indent>\s*)(?P<head>(?:let|const\s+\w+(?:\[[^\]]+\])?)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*)(?P<expr>[^;]+)(?P<tail>;.*)$",
+            line,
+        )
+        if not match:
+            restored_lines.append(line)
+            continue
+
+        expr = match.group("expr").strip()
+        restored_expr = _concat_expr_to_index_set(expr)
+        if restored_expr is None:
+            restored_lines.append(line)
+            continue
+
+        restored_lines.append(
+            f"{match.group('indent')}{match.group('head')}{restored_expr}{match.group('tail')}"
+        )
+    return "\n".join(restored_lines)
+
+
 def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple[Any, int]:
     normalized_source = normalize_scalar_register_declarations(source)
 
@@ -576,6 +633,15 @@ def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple
     try:
         return qiskit_parse(line_stripped_source), removed_line_pragmas
     except Exception as first_exc:
+        if "++" in normalized_source:
+            restored_source = restore_concat_aliases_for_qiskit(normalized_source)
+            if restored_source != normalized_source:
+                restored_line_stripped, restored_removed_pragmas = strip_pragmas_for_qiskit(restored_source)
+                try:
+                    return qiskit_parse(restored_line_stripped), max(removed_line_pragmas, restored_removed_pragmas)
+                except Exception:
+                    pass
+
         # If the source contains pragma expressions in forms that line-based stripping
         # misses, retry by removing pragma AST nodes with openqasm3.
         if "pragma" not in normalized_source.lower():
@@ -783,6 +849,126 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
     return rewritten_lines
 
 
+def rewrite_array_index_set_to_concat_with_map(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> tuple[list[str], list[int]]:
+    if not enabled:
+        return lines, list(range(1, len(lines) + 1))
+
+    code_lines, _ = _comment_aware_code_and_spans(lines)
+    rewritten_lines: list[str] = []
+    kept_line_numbers: list[int] = []
+    temp_counter = 1
+
+    def _is_gate_operand_line(code_only: str) -> bool:
+        stripped = code_only.strip()
+        if not stripped or "=" in stripped or "->" in stripped:
+            return False
+        match = GATE_CALL_LINE_PATTERN.match(stripped)
+        if not match:
+            return False
+        name = match.group("name")
+        if name in {
+            "OPENQASM",
+            "include",
+            "input",
+            "output",
+            "const",
+            "qubit",
+            "bit",
+            "int",
+            "uint",
+            "float",
+            "bool",
+            "array",
+            "let",
+            "gate",
+            "measure",
+            "reset",
+            "if",
+            "for",
+            "while",
+            "switch",
+            "case",
+            "default",
+            "pragma",
+            "barrier",
+            "return",
+        }:
+            return False
+        return True
+
+    for line_no, line in enumerate(lines, start=1):
+        code_only = code_lines[line_no - 1].rstrip()
+        if not code_only.strip():
+            rewritten_lines.append(line)
+            kept_line_numbers.append(line_no)
+            continue
+
+        changed = False
+        gate_operand_line = _is_gate_operand_line(code_only)
+        prelude_parts: list[str] = []
+        rebuilt_parts: list[str] = []
+        cursor = 0
+        for match in INDEX_SET_CONCAT_PATTERN.finditer(code_only):
+            rebuilt_parts.append(code_only[cursor:match.start()])
+            cursor = match.end()
+
+            base = match.group("base")
+            raw_indices = match.group("indices")
+            suffix = match.group("suffix") or ""
+            indices = [part.strip() for part in raw_indices.split(",") if part.strip()]
+            if not indices:
+                rebuilt_parts.append(match.group(0))
+                continue
+
+            concat = " ++ ".join(f"{base}[{index}]" for index in indices)
+            changed = True
+            if suffix.strip() and gate_operand_line:
+                temp_name = f"tmpConcat{temp_counter}"
+                temp_counter += 1
+                prelude_parts.append(f"let {temp_name} = {concat};")
+                rebuilt_parts.append(f"{temp_name}{suffix}")
+            elif suffix.strip():
+                rebuilt_parts.append(f"({concat}){suffix}")
+            else:
+                rebuilt_parts.append(concat)
+
+        rebuilt_parts.append(code_only[cursor:])
+        rewritten_code = "".join(rebuilt_parts)
+        if not changed:
+            rewritten_lines.append(line)
+            kept_line_numbers.append(line_no)
+            continue
+
+        tail = line[len(code_only):] if len(line) >= len(code_only) else ""
+        rewritten_line = f"{rewritten_code}{tail}"
+        if prelude_parts:
+            indent = re.match(r"^\s*", code_only).group(0) if code_only else ""
+            injected_lines = [f"{indent}{part}" for part in prelude_parts]
+            spans.append(
+                RewriteSpan(
+                    line_no,
+                    line,
+                    "\n".join(injected_lines + [rewritten_line]),
+                    8,
+                    "Expanded array-index set with temporary identifier for gate-operand compatibility.",
+                )
+            )
+            rewritten_lines.extend(injected_lines)
+            rewritten_lines.append(rewritten_line)
+            kept_line_numbers.extend([line_no] * (len(injected_lines) + 1))
+        else:
+            spans.append(RewriteSpan(line_no, line, rewritten_line, 8, "Expanded array-index set into explicit concatenation."))
+            rewritten_lines.append(rewritten_line)
+            kept_line_numbers.append(line_no)
+
+    return rewritten_lines, kept_line_numbers
+
+
+def rewrite_array_index_set_to_concat(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> list[str]:
+    rewritten, _ = rewrite_array_index_set_to_concat_with_map(lines, enabled, spans)
+    return rewritten
+
+
 def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, int, int]]]:
     lines = normalize_lines(source)
     matches: dict[int, list[tuple[int, str, int, int]]] = defaultdict(list)
@@ -802,7 +988,7 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         pragma_match = DQC_PRAGMA_PATTERN.match(line)
         if pragma_match:
-            matches[line_no].append((8, "Split-generated teleportations", 0, len(line)))
+            matches[line_no].append((9, "Split-generated teleportations", 0, len(line)))
 
         for start, end in comment_spans.get(line_no, []):
             matches[line_no].append((1, "Drop comments", start, end))
@@ -823,6 +1009,9 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         for uint_match in UINT_TOKEN_PATTERN.finditer(code_only):
             matches[line_no].append((7, "Uint Workaround", uint_match.start(), uint_match.end()))
+
+        for index_set_match in INDEX_SET_CONCAT_PATTERN.finditer(code_only):
+            matches[line_no].append((8, "Array-index set ++concatenation", index_set_match.start(), index_set_match.end()))
 
     return matches
 
@@ -1336,6 +1525,13 @@ def compute_chunk_flows(chunk_texts: list[str], source_text: str) -> list[ChunkF
             program = safe_import_qasm3()(prepared)
         except Exception:
             program = None
+            if "++" in prepared:
+                try:
+                    restored = restore_concat_aliases_for_qiskit(prepared)
+                    if restored != prepared:
+                        program = safe_import_qasm3()(restored)
+                except Exception:
+                    program = None
 
         if program is not None:
             for stmt in getattr(program, "statements", []):
@@ -1797,24 +1993,38 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
                 rewritten = rewrite_bit_to_bool_cast(rewritten, True, spans, source)
             elif rule_id == 7:
                 rewritten = rewrite_uint_to_int(rewritten, True, spans)
+            elif rule_id == 8:
+                rewritten, kept_line_numbers = rewrite_array_index_set_to_concat_with_map(rewritten, True, spans)
+                split_lines = remap_split_points(split_lines, kept_line_numbers)
     rewritten_source = "\n".join(rewritten)
-    dqc_source = add_split_markers(normalize_lines(rewritten_source), split_lines)
+    rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
+    dqc_source = add_split_markers(rewritten_no_pragmas, split_lines)
     chunk_texts = split_dqc_chunks(dqc_source)
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
-    apply_rule_8 = 8 in active_rule_ids
+    apply_rule_9 = 9 in active_rule_ids
     if split_lines:
-        display_rewritten_source = dqc_qasm if apply_rule_8 else dqc_source
+        display_rewritten_source = dqc_qasm if apply_rule_9 else dqc_source
     else:
         display_rewritten_source = rewritten_source
     chunk_graph = build_chunk_dependency_graph(chunk_flows)
     parse_tree = None
     issues: list[RewriteSpan] = []
-    try:
-        # Keep AST spans aligned with what the Rewritten tab is actually showing.
-        parse_tree = parse(display_rewritten_source)
-    except Exception as exc:
-        issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {exc}", kind="error"))
+    parse_candidates = [display_rewritten_source]
+    if apply_rule_9 and dqc_source not in parse_candidates:
+        parse_candidates.append(dqc_source)
+    if rewritten_source not in parse_candidates:
+        parse_candidates.append(rewritten_source)
+    last_parse_exc: Exception | None = None
+    for candidate in parse_candidates:
+        try:
+            # Prefer the Rewritten tab source, but gracefully fall back if it is not parseable.
+            parse_tree = parse(candidate)
+            break
+        except Exception as exc:
+            last_parse_exc = exc
+    if parse_tree is None and last_parse_exc is not None:
+        issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {last_parse_exc}", kind="error"))
     dag_graph, interaction_graph, _ = qasm_token_graph(rewritten_source)
     suggested_split_points, suggestion_reason = suggest_split_points(rewritten_source, distributed_nodes=distributed_nodes)
     circuit_result = None
@@ -1823,8 +2033,26 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
 
-        runtime_source = display_rewritten_source
-        circuit_result, removed_pragmas = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+        runtime_candidates = [display_rewritten_source]
+        if apply_rule_9 and dqc_source not in runtime_candidates:
+            runtime_candidates.append(dqc_source)
+        if rewritten_source not in runtime_candidates:
+            runtime_candidates.append(rewritten_source)
+
+        removed_pragmas = 0
+        runtime_error: Exception | None = None
+        for runtime_source in runtime_candidates:
+            try:
+                circuit_result, removed_pragmas = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+                runtime_error = None
+                break
+            except Exception as exc:
+                runtime_error = exc
+                circuit_result = None
+
+        if circuit_result is None and runtime_error is not None:
+            raise runtime_error
+
         if removed_pragmas:
             issues.append(RewriteSpan(1, "", "", 0, f"Runtime note: removed {removed_pragmas} pragma line(s) before qiskit parsing.", kind="info"))
         if parameter_bindings:

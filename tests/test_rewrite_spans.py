@@ -13,26 +13,29 @@ class RewriteSpanTests(unittest.TestCase):
         rule_names = {rule.rule_id: rule.name for rule in DEFAULT_RULES}
 
         self.assertIn(8, rule_names)
-        self.assertEqual(rule_names[8], "Split-generated teleportations")
+        self.assertEqual(rule_names[8], "Array-index set ++concatenation")
+        self.assertIn(9, rule_names)
+        self.assertEqual(rule_names[9], "Split-generated teleportations")
         self.assertIn(6, rule_names)
         self.assertEqual(rule_names[6], "Bit-to-bool Cast")
         self.assertIn(7, rule_names)
         self.assertEqual(rule_names[7], "Uint Workaround")
 
-    def test_rule_eight_is_listed_last_in_default_rules(self) -> None:
-        self.assertEqual(DEFAULT_RULES[-1].rule_id, 8)
+    def test_split_generated_teleport_rule_is_listed_last_in_default_rules(self) -> None:
+        self.assertEqual(DEFAULT_RULES[-1].rule_id, 9)
 
     def test_default_rule_ids_are_contiguous(self) -> None:
         self.assertEqual([rule.rule_id for rule in DEFAULT_RULES], list(range(len(DEFAULT_RULES))))
 
     def test_active_rules_are_processed_in_numeric_order(self) -> None:
         rules = [
-            RuleState(8, "Split-generated teleportations", "", True),
+            RuleState(9, "Split-generated teleportations", "", True),
+            RuleState(8, "Array-index set ++concatenation", "", True),
             RuleState(7, "Uint Workaround", "", True),
             RuleState(6, "Bit-to-bool Cast", "", True),
             RuleState(1, "Drop comments", "", True),
         ]
-        self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8])
+        self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8, 9])
 
     def test_comment_drop_records_visible_and_invisible_spans(self) -> None:
         spans = []
@@ -135,7 +138,7 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
 
-    def test_original_rule_matches_include_split_pragma_as_rule_eight(self) -> None:
+    def test_original_rule_matches_include_split_pragma_as_rule_nine(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -146,9 +149,9 @@ class RewriteSpanTests(unittest.TestCase):
         matches = original_line_rule_matches(source)
 
         self.assertIn(3, matches)
-        self.assertTrue(any(rule_id == 8 for rule_id, _, _, _ in matches[3]))
+        self.assertTrue(any(rule_id == 9 for rule_id, _, _, _ in matches[3]))
 
-    def test_rule_eight_remaps_split_points_through_header_and_include_insertion(self) -> None:
+    def test_rule_nine_remaps_split_points_through_header_and_include_insertion(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -161,7 +164,7 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertIn("* q[0] from chunk 1", result.rewritten_source)
 
-    def test_disabled_rule_eight_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
+    def test_disabled_rule_nine_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "include \"stdgates.inc\";",
@@ -172,7 +175,7 @@ class RewriteSpanTests(unittest.TestCase):
         ])
         split_before_lines = {5}
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 9))
             for rule in DEFAULT_RULES
         ]
 
@@ -194,7 +197,7 @@ class RewriteSpanTests(unittest.TestCase):
             "measure q[0] -> c[0];",
         ])
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 9))
             for rule in DEFAULT_RULES
         ]
 
@@ -215,7 +218,7 @@ class RewriteSpanTests(unittest.TestCase):
             "measure q[0] -> c[0];",
         ])
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 9))
             for rule in DEFAULT_RULES
         ]
 
@@ -305,7 +308,10 @@ class RewriteSpanTests(unittest.TestCase):
 
     def test_qiskit_example_parses_and_runs_with_default_parameter(self) -> None:
         source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
-        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+        rules = [
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 8))
+            for rule in DEFAULT_RULES
+        ]
 
         preview = rewrite_and_analyze(source, rules, set(), {}, shots=64, timeout_s=5, execute_runtime=False)
         self.assertIsNotNone(preview.circuit)
@@ -314,6 +320,48 @@ class RewriteSpanTests(unittest.TestCase):
         result = rewrite_and_analyze(source, rules, set(), {"a": "pi/2 - 1"}, shots=64, timeout_s=5, execute_runtime=True)
         self.assertEqual(getattr(result.circuit, "num_parameters", 0), 0)
         self.assertTrue(result.counts)
+
+    def test_qiskit_example_array_index_set_is_rewritten_to_concat(self) -> None:
+        source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=16, timeout_s=5, execute_runtime=False)
+
+        self.assertIn("let inner_alias = q[0] ++ q[1];", result.rewritten_source)
+        self.assertIn("let tmpConcat1 = q[1] ++ q[2];", result.rewritten_source)
+        self.assertIn("my_gate(a * 2) aliased[0], tmpConcat1[0];", result.rewritten_source)
+        self.assertTrue(any(span.rule_id == 8 for span in result.spans))
+
+    def test_qiskit_example_qasm_circuit_still_draws_with_rule8_active(self) -> None:
+        source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=8, timeout_s=5, execute_runtime=False)
+
+        self.assertIsNotNone(result.circuit)
+        self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
+
+    def test_qiskit_example_dqc_circuit_still_draws_with_rule8_active(self) -> None:
+        source = Path("qasm/split/qiskit-example/qiskit-example.dqc").read_text(encoding="utf-8")
+        split_before_lines = split_points_from_source(source)
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=8, timeout_s=5, execute_runtime=False)
+
+        self.assertIsNotNone(result.circuit)
+        self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
+
+    def test_qiskit_example_dqc_preserves_split_dependencies_with_rule8_active(self) -> None:
+        source = Path("qasm/split/qiskit-example/qiskit-example.dqc").read_text(encoding="utf-8")
+        split_before_lines = split_points_from_source(source)
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=8, timeout_s=5, execute_runtime=False)
+
+        self.assertEqual(len(result.chunk_flows), 3)
+        self.assertTrue(any(flow.incoming_sources for flow in result.chunk_flows[1:]))
+        self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
+        self.assertNotIn("* no shared qubits from chunk 1", result.rewritten_source)
 
     def test_adder_uint_workaround_rewrites_and_runs(self) -> None:
         source = Path("qasm/adder.qasm").read_text(encoding="utf-8")

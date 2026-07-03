@@ -819,24 +819,60 @@ Should I just delete all *.dqc.qasm files, so that this inferencing does not hap
 
 [answer: yes, delete them!]
 ---------------------------------------------
-
-
-
+I want to add a new rewriting rule, to be inserted just before current last rule (=the split-gen.teleports): it should transform an array-index set (which uses curly-braces inside square-brackets), into a simple concatenation, e.g: q[{0, 2, 5}] becomes q[0] ++ q[2] ++ q[5]
+It's important that this new rule is inserted before the split-gen.teleports rule (to be renumbered), because the rules are processed in sequence, and the each rule may re-process the output of previous rules (like in a pipe).
+Test your fix against qiskit-example.qasm (line #51: q[{0, 1}] ).
+2026.07.03-13.15
+---------------------------------------------
+unfortunately the new rule #8 (array-index set) is too simplistic: it cannot simply convert "q[{1, 2}][0]" into "(q[1] ++ q[2])[0]", for example it cannot do it when it's used as a gateOperand (like in qiskit-example.qasm line 33#), because OpenQASM grammar (qasm3Parser.g4) says:
+gateOperand: indexedIdentifier | HardwareQubit;
+indexedIdentifier: Identifier indexOperator*;
+So rule #8 must handle the gateOperand's case by introducing a temporary Identifier, like so:
+"q[{1, 2}][0]" --> "let tmpConcat = q[1] ++ q[2]; my_gate(pi) aliased[0], tmpConcat[0];"
+2026.07.03-14.43
+---------------------------------------------
+you have lost some of the coloring done during rewriting: check that all rules mark their output with their color, as usual (green for all rules except #9 split-gen.teleports). this is not the first time that this coloring problem happens: add a test to avoid failing it again.
+2026.07.03-14.53
+---------------------------------------------
+the coloring check is still incomplete: e.g. rule #5 (anti-collision gate renaming) coloring works well on cphase+.qasm (), but it misses line #13 of cphase+.dqc .
+2026.07.03-15.08
+---------------------------------------------
+now the coloring seems ok, but qiskit-example.* circuits do not get drawn anymore.
+2026.07.03-15.22
+---------------------------------------------
+fixing rule #8 (array-index set) has broken rule #9 (split-gen.teleports): the inter-chunk qubit dependencies are not recognized, nor injected as teleportations, anymore. Check qiskit-example.dqc
+2026.07.03-15.37
+---------------------------------------------
+the AST-to-code on-click sync is offset by a few tokens: make sure they get back in sync.
+2026.07.03-15.50
+---------------------------------------------
+the line-numbers gutter in the Original code view does not resize automatically when the line-numbers increase to 3 or more digits.
+2026.07.03-16.11
+---------------------------------------------
+rule #8 (array-index set) should be renamed in the Compatibility Rules view, from "Array-index set workaround" to "Array-index set ++concatenation"
+2026.07.03-16.19
+---------------------------------------------
 
 
 ================ TODO:
+the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
+
+upgrade to qiskit 2.5.0
+
+also: qiskit-qasm3-import should support/accept/recognize the "++" concatenation syntax in let-alias expressions, according to: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#5
+
+check that rules are only executed when active/checked, and skipped/ignored when unchecked.
+
+the analysis of dependencies is not working well as it wrongly teleports the same qubit from the same source to different destinations, and this is not possibile as it breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 chunks depend on the same source qubit, then it must be moved in a sequence (first a chunk imports the qubit from the source, and then it exports that qubit into the next chunk). Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
+
 When executing in split contexts (multi-chunks), make sure (and test) that each qubit lives only in 1 place (= 1 scope = 1 chunk) at a time (i.e. respect quantum no-cloning), even if it's been aliased (like aliased variable in qiskit-example.dqc): in a monolithic context (=1 chunk) this property is enforced directly/automatically by qiskit, but in a multi-chunk context this enforcement cannot be done by qiskit (because from its point of view the code is always run in single runtime context: we are simulating a multi-QPUs network, but the simulation lives only at the logical level, in QASM3 language).
 
 rule #8 (split-gen. teleports) should inject q-comm_template.qasm code after adapting it in an intelligent context-sensitive way, according to the split dependency analysis: for each qubit to be exported into next chunk scope, the q_SOURCE should be ...
+
 repeated/multi split-gen. teleports are re-using same var-names: fix it.
 
-don't teleport a multi-qubit array as 1 single qubit: it requires 1 teleportation for each qubit (not 1 single teleportation for all the qubits of the array).
-
 q-comm_template.qasm is a template for all the teleportations to be injected by rule #6.
-For each inter-chunk dependency qubit (represented by q_SOURCE in the template) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the template code adapted with the actual name of q_SOURCE: e.g. if the name of the qubit is myq[2], then q_SOURCE is to be 
+For each inter-chunk dependency qubit (represented by q_SOURCE in the template) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the template code adapted with the actual name of q_SOURCE: e.g. if the name of the qubit is myq[2], then q_SOURCE is to be ... 
 This group of teleportations generated from q-comm_template.qasm should be injected right after the teleportation comment, and before the barrier that follows that comment. 
-
-
-inject & adapt 1 instance of q-comm.qasm for each qubit inter-chunk dependency.
 
 better uint rewrite rule

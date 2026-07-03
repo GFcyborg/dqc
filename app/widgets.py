@@ -749,8 +749,10 @@ class HtmlCodeView(QTextBrowser):
         tooltip_map: dict[int, list[str]] = {}
         visible_lines: set[int] = set()
         partial_highlights: dict[int, list[str]] = {}
-        snippet_tooltips: dict[str, list[str]] = {}
-        teleport_tooltip = "Rule 8: split pragma rewritten into teleportation comment block"
+        snippet_tooltips: dict[str, list[tuple[int, str]]] = {}
+        snippet_fragments: dict[str, list[str]] = {}
+        line_rule_ids: dict[int, set[int]] = {}
+        teleport_tooltip = "Rule 9: split pragma rewritten into teleportation comment block"
         for span in spans:
             rewritten = str(getattr(span, "rewritten", ""))
             if not rewritten.strip():
@@ -763,6 +765,8 @@ class HtmlCodeView(QTextBrowser):
             message = getattr(span, "message", "")
             tooltip = f"Rule {rule_id}: {message}"
             tooltip_map.setdefault(line_no, []).append(tooltip)
+            if isinstance(rule_id, int):
+                line_rule_ids.setdefault(line_no, set()).add(rule_id)
             if rule_id == 7:
                 partial_highlights.setdefault(line_no, []).append(rewritten.strip())
                 continue
@@ -770,18 +774,23 @@ class HtmlCodeView(QTextBrowser):
                 fragment = _changed_fragment(original, rewritten)
                 if fragment.strip():
                     partial_highlights.setdefault(line_no, []).append(fragment)
+                    normalized_rewritten = rewritten.strip()
+                    if normalized_rewritten:
+                        snippet_tooltips.setdefault(normalized_rewritten, []).append((rule_id if isinstance(rule_id, int) else -1, tooltip))
+                        snippet_fragments.setdefault(normalized_rewritten, []).append(fragment)
                     continue
             visible_lines.add(line_no)
             for rewritten_line in rewritten.splitlines():
                 normalized = rewritten_line.strip()
                 if normalized:
-                    snippet_tooltips.setdefault(normalized, []).append(tooltip)
+                    snippet_tooltips.setdefault(normalized, []).append((rule_id if isinstance(rule_id, int) else -1, tooltip))
         lines = rewritten_source.splitlines()
         split_generated_indexes = _split_generated_block_line_indexes(lines)
         for idx in split_generated_indexes:
             line_no = idx + 1
             self._teleport_lines.add(line_no)
             tooltip_map.setdefault(line_no, []).append(teleport_tooltip)
+            line_rule_ids.setdefault(line_no, set()).add(9)
             visible_lines.add(line_no)
 
         line_index = 0
@@ -789,17 +798,31 @@ class HtmlCodeView(QTextBrowser):
             line = lines[line_index]
             snippet = line.strip()
             if snippet and snippet in snippet_tooltips:
-                visible_lines.add(line_index + 1)
-                tooltip_map.setdefault(line_index + 1, []).extend(snippet_tooltips[snippet])
+                matched_line = line_index + 1
+                fragments = [frag for frag in snippet_fragments.get(snippet, []) if frag.strip()]
+                if fragments:
+                    partial_highlights.setdefault(matched_line, []).extend(fragments)
+                else:
+                    visible_lines.add(matched_line)
+                for matched_rule_id, snippet_tooltip in snippet_tooltips[snippet]:
+                    tooltip_map.setdefault(matched_line, []).append(snippet_tooltip)
+                    if matched_rule_id >= 0:
+                        line_rule_ids.setdefault(matched_line, set()).add(matched_rule_id)
             line_index += 1
 
         self._line_tooltips = {
             line_no: "\n".join(dict.fromkeys(messages))
             for line_no, messages in tooltip_map.items()
         }
-        self.setHtml(self._build_html(rewritten_source, visible_lines, partial_highlights))
+        self.setHtml(self._build_html(rewritten_source, visible_lines, partial_highlights, line_rule_ids))
 
-    def _build_html(self, rewritten_source: str, visible_lines: set[int], partial_highlights: dict[int, list[str]]) -> str:
+    def _build_html(
+        self,
+        rewritten_source: str,
+        visible_lines: set[int],
+        partial_highlights: dict[int, list[str]],
+        line_rule_ids: dict[int, set[int]],
+    ) -> str:
         def _highlight_snippets(line_text: str, snippets: list[str]) -> str:
             ranges: list[tuple[int, int]] = []
             seen: set[str] = set()
@@ -855,7 +878,7 @@ class HtmlCodeView(QTextBrowser):
                 # appear in the Rewritten code view.
                 line_index += 1
                 continue
-            if line_no in self._teleport_lines:
+            if line_no in self._teleport_lines or 9 in line_rule_ids.get(line_no, set()):
                 decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
             elif line_no in partial_highlights:
                 decorated.append(_highlight_snippets(line, partial_highlights[line_no]))
@@ -911,7 +934,7 @@ class RulePanel(QFrame):
             row_layout.setSpacing(8)
             check = QCheckBox(f"{rule.rule_id}. {rule.name}")
             check.setChecked(rule.enabled)
-            if rule.rule_id == 8:
+            if rule.rule_id == 9:
                 check.setStyleSheet("color: #0f172a; font-weight: bold; text-decoration: underline;")
             else:
                 check.setStyleSheet("color: #0f172a;")
@@ -932,11 +955,11 @@ class RulePanel(QFrame):
             check.blockSignals(False)
             if bypass and rule_id != 0:
                 check.setEnabled(False)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 8 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 9 else ""
                 check.setStyleSheet(f"color: #94a3b8;{extra}")
             else:
                 check.setEnabled(True)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 8 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 9 else ""
                 check.setStyleSheet(f"color: #0f172a;{extra}")
 
 

@@ -778,7 +778,7 @@ class MainWindow(QMainWindow):
 
 <p>The file <code style='color:#1e3a8a;'>{template_path.name}</code>
 (located at <code>{template_path}</code>) defines a single quantum teleportation
-circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#8 (Split-generated teleportations)</b>
+circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#9 (Split-generated teleportations)</b>
 reads this template and injects one adapted copy for <em>each qubit dependency</em>
 that must cross a split-point boundary.</p>
 
@@ -890,6 +890,8 @@ already declared in the surrounding chunk code.</p>
         self.original_editor.blockSignals(True)
         self.original_editor.setPlainText(self.current_source)
         self.original_editor.blockSignals(False)
+        self.original_editor.update_line_number_area_width(self.original_editor.blockCount())
+        self.original_editor.line_number_area.update()
         self.original_editor.setRewriteSpans([])
         self.original_editor.setPragmaLines(split_pragma_line_numbers(self.current_source))
         self.rule_panel.set_states({rule.rule_id for rule in self.rules if rule.enabled}, self._rule_bypass_enabled())
@@ -1010,6 +1012,52 @@ already declared in the surrounding chunk code.</p>
             end = self._clamp_editor_pos(editor, start + 1)
         return start, end
 
+    def _node_sync_token(self, node: Any) -> str:
+        node_name = getattr(node, "name", None)
+        if isinstance(node_name, str):
+            token = node_name.strip()
+            if token:
+                return token
+        return ""
+
+    def _refine_span_range_for_node(self, editor: QWidget, node: Any, start: int, end: int) -> tuple[int, int]:
+        token = self._node_sync_token(node)
+        if not token:
+            return start, end
+
+        text = editor.toPlainText()
+        if not text:
+            return start, end
+
+        start = max(0, min(start, len(text)))
+        end = max(start, min(end, len(text)))
+        current = text[start:end]
+        if token in current:
+            return start, end
+
+        window_radius = 512
+        window_start = max(0, start - window_radius)
+        window_end = min(len(text), max(end, start) + window_radius)
+        window = text[window_start:window_end]
+
+        nearest_start: int | None = None
+        nearest_distance: int | None = None
+        search_from = 0
+        while True:
+            rel_index = window.find(token, search_from)
+            if rel_index < 0:
+                break
+            abs_index = window_start + rel_index
+            distance = abs(abs_index - start)
+            if nearest_start is None or nearest_distance is None or distance < nearest_distance:
+                nearest_start = abs_index
+                nearest_distance = distance
+            search_from = rel_index + 1
+
+        if nearest_start is None:
+            return start, end
+        return nearest_start, min(len(text), nearest_start + len(token))
+
     def _tree_node_at_cursor(self, editor: QWidget, program: Any) -> Any | None:
         cursor_pos = editor.textCursor().position()
         best_node = None
@@ -1061,6 +1109,7 @@ already declared in the surrounding chunk code.</p>
         self._ast_syncing = True
         try:
             start, end = self._span_to_abs_range(editor, span)
+            start, end = self._refine_span_range_for_node(editor, node, start, end)
             document = editor.document()
             limit = max(0, document.characterCount() - 1)
             start = max(0, min(start, limit))
@@ -1215,6 +1264,8 @@ already declared in the surrounding chunk code.</p>
         self.original_editor.blockSignals(True)
         self.original_editor.setPlainText(new_text)
         self.original_editor.blockSignals(False)
+        self.original_editor.update_line_number_area_width(self.original_editor.blockCount())
+        self.original_editor.line_number_area.update()
 
         target_block = self.original_editor.document().findBlockByNumber(max(0, cursor_block))
         if target_block.isValid():
