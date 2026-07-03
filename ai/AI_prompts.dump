@@ -930,8 +930,9 @@ the green coloring of rule #8 and #9 is still broken: now it marks too much. it 
 the green coloring of rule #8 and #9 is still broken: now it marks too little. take qiskit-example.qasm as a benchmark for your tests: especially lines #33 and #52.
 2026.07.04-01.29
 ---------------------------------------------
-
-
+I want a general trimming of the python code: why are there many main_window_*.py files? are they all needed, or just leftovers? is there any duplicate code to be merged?
+2026.07.04-01.42
+---------------------------------------------
 
 
 ================ TODO:
