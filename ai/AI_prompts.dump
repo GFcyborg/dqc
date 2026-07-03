@@ -914,13 +914,32 @@ line 16:0 no viable alternative at input 'prqubit'
 line 15:0 no viable alternative at input 'prqubit'
 2026.07.03-22.47
 ---------------------------------------------
+I want to completely drop current rule #8 (array-index set ++concat) in order to avoid having a fallback for that ++ concatenation (that we discussed earlier); this will leave the curly-braces array-index set syntax unmatching any rule.
+Instead of the dropped rule #8, I want to create 2 new rules, to be numbered as #8 and #9 (hence pushing current rule #9 (split-gen. teleports) into position #10).
+The new rule #8 will handle all let-alias expressions (and their references) by dropping the let-alias declaration and rewriting all following references of the alias, into the original value of that alias, e.g.: "let aliased = q[2:5]; my_gate(a * 2) aliased[0], q[3];" becomes "my_gate(a * 2) q[2:5][0], q[3];".
+The new rule #9 will rewrite elements of array-slices/subsets as the underlying/referenced elements, by resolving the chained indexing, e.g.: "q[2:5][1]" becomes "q[3]"; "q[{1, 2}][0]" becomes "q[1]" ;
+The order of the rules is important, since it governs the rule pipeline, allowing rule #9 to process the output of rule #8.
+2026.07.04-01.03
+---------------------------------------------
+the usual green coloring of rules output is not working well for rule #8 and #9: it's offset by a few chars.
+2026.07.04-01.15
+---------------------------------------------
+the green coloring of rule #8 and #9 is still broken: now it marks too much. it should mark only the minimal strings produced by the rewrite, not the whole lines, and not unrelated code!
+2026.07.04-01.22
+---------------------------------------------
+the green coloring of rule #8 and #9 is still broken: now it marks too little. take qiskit-example.qasm as a benchmark for your tests: especially lines #33 and #52.
+2026.07.04-01.29
+---------------------------------------------
+
 
 
 
 ================ TODO:
-the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
+the dependency analysis wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
+This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.
+Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
 
-the analysis of dependencies is not working well as it wrongly teleports the same qubit from the same source to different destinations, and this is not possibile as it breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 chunks depend on the same source qubit, then it must be moved in a sequence (first a chunk imports the qubit from the source, and then it exports that qubit into the next chunk). Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
+the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
 
 When executing in split contexts (multi-chunks), make sure (and test) that each qubit lives only in 1 place (= 1 scope = 1 chunk) at a time (i.e. respect quantum no-cloning), even if it's been aliased (like aliased variable in qiskit-example.dqc): in a monolithic context (=1 chunk) this property is enforced directly/automatically by qiskit, but in a multi-chunk context this enforcement cannot be done by qiskit (because from its point of view the code is always run in single runtime context: we are simulating a multi-QPUs network, but the simulation lives only at the logical level, in QASM3 language).
 

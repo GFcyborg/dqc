@@ -197,8 +197,9 @@ DEFAULT_RULES = [
     RuleState(5, "Rename colliding gates", "Prefix custom gate definitions that collide with stdgates.inc."),
     RuleState(6, "Bit-to-bool Cast", "Rewrite `if(bit == 1)` to `if(bit)` and `if(bit == 0)` to `if(!bit)`."),
     RuleState(7, "Uint Workaround", "Lower uint declarations/usages into importer-safe forms (const folding, loop unrolling, and guard simplification)."),
-    RuleState(8, "Array-index set ++concatenation", "Rewrite `q[{a, b, ...}]` into explicit concatenation form for importer compatibility."),
-    RuleState(9, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
+    RuleState(8, "Inline let-aliases", "Drop let alias declarations and inline subsequent alias references to their aliased value."),
+    RuleState(9, "Resolve chained indexing", "Resolve chained indexing like `q[2:5][1]` and `q[{1,2}][0]` to direct element references."),
+    RuleState(10, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
 
 
@@ -858,124 +859,169 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
     return rewritten_lines
 
 
-def rewrite_array_index_set_to_concat_with_map(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> tuple[list[str], list[int]]:
+LET_ALIAS_DECL_PATTERN = re.compile(
+    r"^(?P<indent>\s*)let\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<expr>[^;]+);(?P<tail>\s*(?://.*)?)$"
+)
+CHAINED_INDEX_PATTERN = re.compile(
+    r"\b(?P<base>[A-Za-z_][A-Za-z0-9_]*)\s*\[(?P<first>[^\]]+)\]\s*\[(?P<second>[^\]]+)\]"
+)
+
+
+def _replace_alias_references(code: str, aliases: dict[str, str]) -> str:
+    rewritten = code
+    # Longer alias names first to avoid partial overlaps.
+    for alias_name, alias_expr in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+        pattern = re.compile(rf"\b{re.escape(alias_name)}\b")
+        rewritten = pattern.sub(alias_expr, rewritten)
+    return rewritten
+
+
+def rewrite_inline_let_aliases_with_map(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> tuple[list[str], list[int]]:
     if not enabled:
         return lines, list(range(1, len(lines) + 1))
 
     code_lines, _ = _comment_aware_code_and_spans(lines)
     rewritten_lines: list[str] = []
     kept_line_numbers: list[int] = []
-    temp_counter = 1
+    aliases: dict[str, str] = {}
 
-    def _is_gate_operand_line(code_only: str) -> bool:
-        stripped = code_only.strip()
-        if not stripped or "=" in stripped or "->" in stripped:
-            return False
-        match = GATE_CALL_LINE_PATTERN.match(stripped)
-        if not match:
-            return False
-        name = match.group("name")
-        if name in {
-            "OPENQASM",
-            "include",
-            "input",
-            "output",
-            "const",
-            "qubit",
-            "bit",
-            "int",
-            "uint",
-            "float",
-            "bool",
-            "array",
-            "let",
-            "gate",
-            "measure",
-            "reset",
-            "if",
-            "for",
-            "while",
-            "switch",
-            "case",
-            "default",
-            "pragma",
-            "barrier",
-            "return",
-        }:
-            return False
-        return True
+    for line_no, line in enumerate(lines, start=1):
+        code_only = code_lines[line_no - 1]
+        match_decl = LET_ALIAS_DECL_PATTERN.match(code_only.rstrip())
+        if match_decl:
+            alias_name = match_decl.group("name")
+            alias_expr = _replace_alias_references(match_decl.group("expr").strip(), aliases)
+            aliases[alias_name] = alias_expr
+            spans.append(RewriteSpan(line_no, line, "", 8, f"Inlined and removed let alias `{alias_name}` declaration."))
+            continue
+
+        if not aliases:
+            rewritten_lines.append(line)
+            kept_line_numbers.append(line_no)
+            continue
+
+        code_text = code_only.rstrip()
+        rewritten_code = code_text
+        replacements: list[tuple[str, str]] = []
+        for alias_name, alias_expr in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+            pattern = re.compile(rf"\b{re.escape(alias_name)}\b")
+            if not pattern.search(rewritten_code):
+                continue
+
+            def _record_replace(_match: re.Match[str]) -> str:
+                replacements.append((alias_name, alias_expr))
+                return alias_expr
+
+            rewritten_code = pattern.sub(_record_replace, rewritten_code)
+
+        if rewritten_code == code_text:
+            rewritten_lines.append(line)
+            kept_line_numbers.append(line_no)
+            continue
+
+        tail = line[len(code_text):] if len(line) >= len(code_text) else ""
+        rewritten_line = f"{rewritten_code}{tail}"
+        if replacements:
+            for alias_name, alias_expr in replacements:
+                spans.append(RewriteSpan(line_no, alias_name, alias_expr, 8, "Rewrote alias reference to its inlined value."))
+        else:
+            spans.append(RewriteSpan(line_no, line, rewritten_line, 8, "Rewrote alias reference to its inlined value."))
+        rewritten_lines.append(rewritten_line)
+        kept_line_numbers.append(line_no)
+
+    return rewritten_lines, kept_line_numbers
+
+
+def rewrite_inline_let_aliases(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> list[str]:
+    rewritten, _ = rewrite_inline_let_aliases_with_map(lines, enabled, spans)
+    return rewritten
+
+
+def _parse_selector_values(selector_text: str) -> list[int] | None:
+    selector = selector_text.strip()
+    if not selector:
+        return None
+    if selector.startswith("{") and selector.endswith("}"):
+        inner = selector[1:-1].strip()
+        if not inner:
+            return None
+        values: list[int] = []
+        for part in inner.split(","):
+            part = part.strip()
+            if not re.fullmatch(r"-?\d+", part):
+                return None
+            values.append(int(part))
+        return values
+    if ":" in selector:
+        parts = [part.strip() for part in selector.split(":")]
+        if len(parts) not in {2, 3}:
+            return None
+        if not all(re.fullmatch(r"-?\d+", part) for part in parts):
+            return None
+        if len(parts) == 2:
+            start, end = int(parts[0]), int(parts[1])
+            step = 1 if end >= start else -1
+        else:
+            start, step, end = int(parts[0]), int(parts[1]), int(parts[2])
+            if step == 0:
+                return None
+        if step > 0:
+            return list(range(start, end + 1, step))
+        return list(range(start, end - 1, step))
+    if re.fullmatch(r"-?\d+", selector):
+        return [int(selector)]
+    return None
+
+
+def rewrite_resolve_chained_indexing(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> list[str]:
+    if not enabled:
+        return lines
+
+    code_lines, _ = _comment_aware_code_and_spans(lines)
+    rewritten_lines: list[str] = []
 
     for line_no, line in enumerate(lines, start=1):
         code_only = code_lines[line_no - 1].rstrip()
         if not code_only.strip():
             rewritten_lines.append(line)
-            kept_line_numbers.append(line_no)
             continue
 
         changed = False
-        gate_operand_line = _is_gate_operand_line(code_only)
-        prelude_parts: list[str] = []
-        rebuilt_parts: list[str] = []
-        cursor = 0
-        for match in INDEX_SET_CONCAT_PATTERN.finditer(code_only):
-            rebuilt_parts.append(code_only[cursor:match.start()])
-            cursor = match.end()
+        replacements: list[tuple[str, str]] = []
 
+        def _replace(match: re.Match[str]) -> str:
+            nonlocal changed
             base = match.group("base")
-            raw_indices = match.group("indices")
-            suffix = match.group("suffix") or ""
-            indices = [part.strip() for part in raw_indices.split(",") if part.strip()]
-            if not indices:
-                rebuilt_parts.append(match.group(0))
-                continue
-
-            concat = " ++ ".join(f"{base}[{index}]" for index in indices)
+            first = match.group("first")
+            second = match.group("second")
+            if not re.fullmatch(r"-?\d+", second.strip()):
+                return match.group(0)
+            values = _parse_selector_values(first)
+            if not values:
+                return match.group(0)
+            index = int(second.strip())
+            if index < 0 or index >= len(values):
+                return match.group(0)
             changed = True
-            if suffix.strip() and gate_operand_line:
-                temp_name = f"tmpConcat{temp_counter}"
-                temp_counter += 1
-                prelude_parts.append(f"let {temp_name} = {concat};")
-                rebuilt_parts.append(f"{temp_name}{suffix}")
-            elif suffix.strip():
-                rebuilt_parts.append(f"({concat}){suffix}")
-            else:
-                rebuilt_parts.append(concat)
+            rewritten_token = f"{base}[{values[index]}]"
+            replacements.append((match.group(0), rewritten_token))
+            return rewritten_token
 
-        rebuilt_parts.append(code_only[cursor:])
-        rewritten_code = "".join(rebuilt_parts)
+        rewritten_code = CHAINED_INDEX_PATTERN.sub(_replace, code_only)
         if not changed:
             rewritten_lines.append(line)
-            kept_line_numbers.append(line_no)
             continue
 
         tail = line[len(code_only):] if len(line) >= len(code_only) else ""
         rewritten_line = f"{rewritten_code}{tail}"
-        if prelude_parts:
-            indent = re.match(r"^\s*", code_only).group(0) if code_only else ""
-            injected_lines = [f"{indent}{part}" for part in prelude_parts]
-            spans.append(
-                RewriteSpan(
-                    line_no,
-                    line,
-                    "\n".join(injected_lines + [rewritten_line]),
-                    8,
-                    "Expanded array-index set with temporary identifier for gate-operand compatibility.",
-                )
-            )
-            rewritten_lines.extend(injected_lines)
-            rewritten_lines.append(rewritten_line)
-            kept_line_numbers.extend([line_no] * (len(injected_lines) + 1))
+        if replacements:
+            for original_token, rewritten_token in replacements:
+                spans.append(RewriteSpan(line_no, original_token, rewritten_token, 9, "Resolved chained indexing into direct element access."))
         else:
-            spans.append(RewriteSpan(line_no, line, rewritten_line, 8, "Expanded array-index set into explicit concatenation."))
-            rewritten_lines.append(rewritten_line)
-            kept_line_numbers.append(line_no)
+            spans.append(RewriteSpan(line_no, line, rewritten_line, 9, "Resolved chained indexing into direct element access."))
+        rewritten_lines.append(rewritten_line)
 
-    return rewritten_lines, kept_line_numbers
-
-
-def rewrite_array_index_set_to_concat(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> list[str]:
-    rewritten, _ = rewrite_array_index_set_to_concat_with_map(lines, enabled, spans)
-    return rewritten
+    return rewritten_lines
 
 
 def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, int, int]]]:
@@ -997,7 +1043,7 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         pragma_match = DQC_PRAGMA_PATTERN.match(line)
         if pragma_match:
-            matches[line_no].append((9, "Split-generated teleportations", 0, len(line)))
+            matches[line_no].append((10, "Split-generated teleportations", 0, len(line)))
 
         for start, end in comment_spans.get(line_no, []):
             matches[line_no].append((1, "Drop comments", start, end))
@@ -1019,8 +1065,26 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
         for uint_match in UINT_TOKEN_PATTERN.finditer(code_only):
             matches[line_no].append((7, "Uint Workaround", uint_match.start(), uint_match.end()))
 
-        for index_set_match in INDEX_SET_CONCAT_PATTERN.finditer(code_only):
-            matches[line_no].append((8, "Array-index set ++concatenation", index_set_match.start(), index_set_match.end()))
+        alias_decl = LET_ALIAS_DECL_PATTERN.match(code_only.rstrip())
+        if alias_decl:
+            matches[line_no].append((8, "Inline let-aliases", 0, len(code_only.rstrip())))
+
+        for chained_index_match in CHAINED_INDEX_PATTERN.finditer(code_only):
+            matches[line_no].append((9, "Resolve chained indexing", chained_index_match.start(), chained_index_match.end()))
+
+    alias_decl_lines: dict[str, int] = {}
+    for line_no, code_only in enumerate(code_lines, start=1):
+        alias_decl = LET_ALIAS_DECL_PATTERN.match(code_only.rstrip())
+        if alias_decl:
+            alias_decl_lines[alias_decl.group("name")] = line_no
+
+    for alias_name, decl_line in alias_decl_lines.items():
+        pattern = re.compile(rf"\b{re.escape(alias_name)}\b")
+        for line_no, code_only in enumerate(code_lines, start=1):
+            if line_no <= decl_line:
+                continue
+            for alias_ref in pattern.finditer(code_only):
+                matches[line_no].append((8, "Inline let-aliases", alias_ref.start(), alias_ref.end()))
 
     return matches
 
@@ -2017,8 +2081,18 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
             elif rule_id == 7:
                 rewritten = rewrite_uint_to_int(rewritten, True, spans)
             elif rule_id == 8:
-                rewritten, kept_line_numbers = rewrite_array_index_set_to_concat_with_map(rewritten, True, spans)
+                span_start_index = len(spans)
+                rewritten, kept_line_numbers = rewrite_inline_let_aliases_with_map(rewritten, True, spans)
+                old_to_new_line = {old_line: new_line for new_line, old_line in enumerate(kept_line_numbers, start=1)}
+                for span in spans[span_start_index:]:
+                    if not span.rewritten.strip():
+                        continue
+                    remapped_line = old_to_new_line.get(span.line)
+                    if remapped_line is not None:
+                        span.line = remapped_line
                 split_lines = remap_split_points(split_lines, kept_line_numbers)
+            elif rule_id == 9:
+                rewritten = rewrite_resolve_chained_indexing(rewritten, True, spans)
     rewritten_source = "\n".join(rewritten)
     rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
     dqc_source = add_split_markers(rewritten_no_pragmas, split_lines)
@@ -2026,16 +2100,16 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     fallback_events_set: set[str] = set()
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source, fallback_events=fallback_events_set)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
-    apply_rule_9 = 9 in active_rule_ids
+    apply_rule_10 = 10 in active_rule_ids
     if split_lines:
-        display_rewritten_source = dqc_qasm if apply_rule_9 else dqc_source
+        display_rewritten_source = dqc_qasm if apply_rule_10 else dqc_source
     else:
         display_rewritten_source = rewritten_source
     chunk_graph = build_chunk_dependency_graph(chunk_flows)
     parse_tree = None
     issues: list[RewriteSpan] = []
     parse_candidates = [display_rewritten_source]
-    if apply_rule_9 and dqc_source not in parse_candidates:
+    if apply_rule_10 and dqc_source not in parse_candidates:
         parse_candidates.append(dqc_source)
     if rewritten_source not in parse_candidates:
         parse_candidates.append(rewritten_source)
@@ -2058,7 +2132,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         from qiskit_qasm3_import import parse as qiskit_parse
 
         runtime_candidates = [display_rewritten_source]
-        if apply_rule_9 and dqc_source not in runtime_candidates:
+        if apply_rule_10 and dqc_source not in runtime_candidates:
             runtime_candidates.append(dqc_source)
         if rewritten_source not in runtime_candidates:
             runtime_candidates.append(rewritten_source)

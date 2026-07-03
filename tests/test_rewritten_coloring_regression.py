@@ -34,7 +34,7 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
                 "gate my_cx a, b { }",
                 "if(c) {}",
                 "x q[0];",
-                "let tmpConcat1 = q[1] ++ q[2];",
+                "my_gate(a * 2) q[1], q[1];",
                 "/* Teleporting qubits into chunk 2:",
                 " * q[0] from chunk 1",
                 " */",
@@ -48,16 +48,23 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
             RewriteSpan(5, "x q[i];", "x q[0];", 7, "Applied uint compatibility rewrite."),
             RewriteSpan(
                 6,
-                "my_gate(a * 2) aliased[0], q[{1, 2}][0];",
-                "let tmpConcat1 = q[1] ++ q[2];\nmy_gate(a * 2) aliased[0], tmpConcat1[0];",
+                "let aliased = q[1:2];",
+                "",
                 8,
-                "Expanded array-index set with temporary identifier for gate-operand compatibility.",
+                "Inlined and removed let alias `aliased` declaration.",
             ),
             RewriteSpan(
-                7,
+                6,
+                "q[{1, 2}][0]",
+                "q[1]",
+                9,
+                "Resolved chained indexing into direct element access.",
+            ),
+            RewriteSpan(
+                8,
                 "pragma dqc.v1.split id=1",
                 "/* Teleporting qubits into chunk 2:\n * q[0] from chunk 1\n */",
-                9,
+                10,
                 "split pragma rewritten into teleportation comment block",
             ),
         ]
@@ -70,7 +77,8 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
         self.assertIn("<span style='color:#22c55e'>include &quot;stdgates.inc&quot;;</span>", html)
         self.assertIn("<span style='color:#22c55e'>my_</span>", html)
         self.assertIn("<span style='color:#22c55e'>if(c) {}</span>", html)
-        self.assertIn("<span style='color:#22c55e'>let tmpConcat1 = q[1] ++ q[2];</span>", html)
+        self.assertIn("my_gate(a * 2) <span style='color:#22c55e'>q[1]</span>, q[1];", html)
+        self.assertNotIn("<span style='color:#22c55e'>my_gate(a * 2) q[1], q[1];</span>", html)
 
         # Split-generated teleport content should stay orange.
         self.assertIn("<span style='color:#ca8a04'>/* Teleporting qubits into chunk 2:</span>", html)
@@ -92,6 +100,21 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
         # The usage occurrence (line 13 in original .dqc source) remains snippet-green
         # even after split-generated blocks shift line numbers in rewritten output.
         self.assertIn("<span style='color:#22c55e'>my_</span>cphase(π / 2) q[0], q[1];", html)
+
+    def test_qiskit_example_rule8_rule9_snippets_highlight_on_benchmark_lines(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        _app = QApplication.instance() or QApplication([])
+
+        source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=8, timeout_s=5, execute_runtime=False)
+
+        view = _CaptureHtmlCodeView()
+        view.set_rewrite_result(result.rewritten_source, result.spans)
+        html = view.captured_html
+
+        self.assertIn("my_gate(a * 2) <span style='color:#22c55e'>q[0]</span>, <span style='color:#22c55e'>q[1]</span>;", html)
+        self.assertIn("reset <span style='color:#22c55e'>q[{0, 1}]</span>;", html)
 
 
 if __name__ == "__main__":
