@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from contextlib import redirect_stderr
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import io
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.error import URLError
@@ -164,6 +166,7 @@ class RewriteResult:
     ast_graph: nx.DiGraph | None = None
     suggested_split_points: list[int] = field(default_factory=list)
     suggestion_reason: str = ""
+    fallback_events: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -247,7 +250,7 @@ def line_is_inside_blocking_scope(source: str, line: int) -> bool:
     if line < 1:
         return False
     try:
-        program = safe_import_qasm3()(source)
+        program = _parse_quietly(safe_import_qasm3(), source)
     except Exception:
         return False
     for node in _iter_ast_nodes(program):
@@ -559,7 +562,7 @@ def _strip_pragmas_via_openqasm_ast(source: str) -> tuple[str, int]:
     try:
         import openqasm3  # type: ignore
 
-        program = openqasm3.parse(source)
+        program = _parse_quietly(openqasm3.parse, source)
         statements = list(getattr(program, "statements", []) or [])
         kept: list[Any] = []
         removed = 0
@@ -626,19 +629,25 @@ def restore_concat_aliases_for_qiskit(source: str) -> str:
     return "\n".join(restored_lines)
 
 
-def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple[Any, int]:
+def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple[Any, int, list[str]]:
     normalized_source = normalize_scalar_register_declarations(source)
 
     line_stripped_source, removed_line_pragmas = strip_pragmas_for_qiskit(normalized_source)
     try:
-        return qiskit_parse(line_stripped_source), removed_line_pragmas
+        fallback_events: list[str] = []
+        if removed_line_pragmas > 0:
+            fallback_events.append("Pragma stripping (line-based)")
+        return _parse_quietly(qiskit_parse, line_stripped_source), removed_line_pragmas, fallback_events
     except Exception as first_exc:
         if "++" in normalized_source:
             restored_source = restore_concat_aliases_for_qiskit(normalized_source)
             if restored_source != normalized_source:
                 restored_line_stripped, restored_removed_pragmas = strip_pragmas_for_qiskit(restored_source)
                 try:
-                    return qiskit_parse(restored_line_stripped), max(removed_line_pragmas, restored_removed_pragmas)
+                    fallback_events = ["++ alias normalization for qiskit parser"]
+                    if restored_removed_pragmas > 0:
+                        fallback_events.append("Pragma stripping (line-based)")
+                    return _parse_quietly(qiskit_parse, restored_line_stripped), max(removed_line_pragmas, restored_removed_pragmas), fallback_events
                 except Exception:
                     pass
 
@@ -651,8 +660,8 @@ def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple
         if removed_ast_pragmas <= 0:
             raise first_exc
         try:
-            circuit = qiskit_parse(ast_stripped_source)
-            return circuit, max(removed_line_pragmas, removed_ast_pragmas)
+            circuit = _parse_quietly(qiskit_parse, ast_stripped_source)
+            return circuit, max(removed_line_pragmas, removed_ast_pragmas), ["Pragma stripping (AST-based)"]
         except Exception:
             raise first_exc
 
@@ -1511,7 +1520,7 @@ def _scan_statement_dependencies(
         current_writers[name] = chunk_index
 
 
-def compute_chunk_flows(chunk_texts: list[str], source_text: str) -> list[ChunkFlow]:
+def compute_chunk_flows(chunk_texts: list[str], source_text: str, fallback_events: set[str] | None = None) -> list[ChunkFlow]:
     current_writers: dict[str, int] = {}
     flows: list[ChunkFlow] = []
     outgoing_by_source: dict[int, dict[str, set[int]]] = {}
@@ -1522,14 +1531,16 @@ def compute_chunk_flows(chunk_texts: list[str], source_text: str) -> list[ChunkF
         incoming_sources: dict[str, set[int]] = {}
         prepared = prepare_chunk_text_for_run(chunk_text, source_text)
         try:
-            program = safe_import_qasm3()(prepared)
+            program = _parse_quietly(safe_import_qasm3(), prepared)
         except Exception:
             program = None
             if "++" in prepared:
                 try:
                     restored = restore_concat_aliases_for_qiskit(prepared)
                     if restored != prepared:
-                        program = safe_import_qasm3()(restored)
+                        program = _parse_quietly(safe_import_qasm3(), restored)
+                        if fallback_events is not None:
+                            fallback_events.add("++ alias normalization for chunk-flow analysis")
                 except Exception:
                     program = None
 
@@ -1814,6 +1825,18 @@ def safe_import_qasm3():
     return parse
 
 
+def _parse_quietly(parse_fn: Any, source: str) -> Any:
+    """Run parser while suppressing recoverable ANTLR stderr chatter.
+
+    Some parser retries are expected to fail as part of fallback logic. ANTLR
+    still emits low-level diagnostics to stderr (e.g. "no viable alternative")
+    even though the app handles the exception and recovers. Suppress those
+    transient diagnostics to keep the GUI console clean.
+    """
+    with redirect_stderr(io.StringIO()):
+        return parse_fn(source)
+
+
 def ast_to_tree(node: Any, label: str = "program", depth: int = 0) -> list[str]:
     if isinstance(node, (str, int, float, bool)) or node is None:
         return [f"{'  ' * depth}{label}: {node!r}"]
@@ -1927,12 +1950,12 @@ def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | Non
     from qiskit_qasm3_import import parse as qiskit_parse
 
     start = time.perf_counter()
-    circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
+    circuit, _, fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
     circuit = _bind_circuit_parameters(circuit, parameter_bindings)
     compiled = _compile_for_aer_runtime(circuit)
     counts = _run_aer_counts_with_fallback(compiled, shots)
     duration_s = time.perf_counter() - start
-    return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s)
+    return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s, fallback_events=fallback_events)
 
 
 def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] | None, shots: int) -> tuple[dict[str, int] | None, str | None, datetime]:
@@ -1940,7 +1963,7 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
 
-        circuit, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+        circuit, _, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
         circuit = _bind_circuit_parameters(circuit, parameter_bindings)
         compiled = _compile_for_aer_runtime(circuit)
         return _run_aer_counts_with_fallback(compiled, shots), None, run_timestamp
@@ -2000,7 +2023,8 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
     dqc_source = add_split_markers(rewritten_no_pragmas, split_lines)
     chunk_texts = split_dqc_chunks(dqc_source)
-    chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source)
+    fallback_events_set: set[str] = set()
+    chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source, fallback_events=fallback_events_set)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
     apply_rule_9 = 9 in active_rule_ids
     if split_lines:
@@ -2019,7 +2043,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     for candidate in parse_candidates:
         try:
             # Prefer the Rewritten tab source, but gracefully fall back if it is not parseable.
-            parse_tree = parse(candidate)
+            parse_tree = _parse_quietly(parse, candidate)
             break
         except Exception as exc:
             last_parse_exc = exc
@@ -2043,7 +2067,8 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         runtime_error: Exception | None = None
         for runtime_source in runtime_candidates:
             try:
-                circuit_result, removed_pragmas = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+                circuit_result, removed_pragmas, parse_fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
+                fallback_events_set.update(parse_fallback_events)
                 runtime_error = None
                 break
             except Exception as exc:
@@ -2064,7 +2089,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
             duration_s = time.perf_counter() - start
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"Runtime execution failed: {exc}", kind="error"))
-    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=dqc_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason)
+    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=dqc_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set))
 
 
 def build_ast_graph(parse_tree: Any) -> nx.DiGraph:

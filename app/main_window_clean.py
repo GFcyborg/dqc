@@ -264,6 +264,8 @@ class MainWindow(QMainWindow):
             QTabWidget::pane { border: 1px solid rgba(96, 165, 250, 0.25); border-radius: 10px; background: white; }
             QTabBar::tab { background: linear-gradient(to bottom, #e8eef7, #dbeafe); color: #0f172a; padding: 8px 12px; margin-right: 2px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
             QTabBar::tab:selected { background: white; color: #1d4ed8; }
+            QTabBar[dqcRewriteWarn="true"]::tab:last { color: #b91c1c; font-weight: 700; }
+            QTabBar[dqcRewriteWarn="true"]::tab:last:selected { color: #b91c1c; font-weight: 700; }
             QSplitter::handle { background: rgba(96, 165, 250, 0.35); }
             QPushButton { background: linear-gradient(to bottom, #eff6ff, #dbeafe); color: #0f172a; border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 6px 10px; }
             QPushButton:hover { background: linear-gradient(to bottom, #dbeafe, #bfdbfe); }
@@ -303,6 +305,7 @@ class MainWindow(QMainWindow):
         self.code_tabs.addTab(self.original_editor, "Original")
         self.code_tabs.addTab(self.rule_scroll, "Compatibility Rules")
         self.code_tabs.addTab(self.rewritten_view, "Rewritten")
+        self.code_tabs.setTabToolTip(2, "Rewritten source after applying active compatibility rules.")
         _original_tab_legend = (
             "<html><b>Original Code — Color Legend</b><br><br>"
                 "<table cellspacing='0' style='width:760px;border-collapse:collapse;table-layout:fixed;'>"
@@ -326,6 +329,7 @@ class MainWindow(QMainWindow):
         self.code_tabs.currentChanged.connect(self._sync_ast_from_current_tab)
         self.code_tabs.setMinimumHeight(0)
         self.code_tabs.setMinimumWidth(0)
+        self._set_rewritten_tab_fallback_warning([])
 
         code_shell = QWidget()
         code_layout = QVBoxLayout(code_shell)
@@ -1221,6 +1225,7 @@ already declared in the surrounding chunk code.</p>
             self.original_editor.setOriginalRuleMatches(original_line_rule_matches(display_source))
             self.original_editor.setRewriteSpans(result.spans)
             self.rewritten_view.set_rewrite_result(result.rewritten_source, result.spans)
+            self._set_rewritten_tab_fallback_warning(result.fallback_events)
             self.original_editor.setDiagnosticLines({})
             pragma_lines = split_pragma_line_numbers(display_source)
             self.original_editor.setPragmaLines(pragma_lines)
@@ -1248,6 +1253,25 @@ already declared in the surrounding chunk code.</p>
         except Exception as exc:
             self._shutdown_runtime_executor()
             self.runtime_output.setPlainText(f"Runtime failed: {exc}")
+
+    def _set_rewritten_tab_fallback_warning(self, fallback_events: list[str]) -> None:
+        tab_bar = self.code_tabs.tabBar()
+        has_fallbacks = bool(fallback_events)
+        tab_bar.setProperty("dqcRewriteWarn", has_fallbacks)
+        tab_bar.style().unpolish(tab_bar)
+        tab_bar.style().polish(tab_bar)
+
+        if has_fallbacks:
+            tab_bar.setTabTextColor(2, QColor("#b91c1c"))
+            bullet_lines = "\n".join(f"- {entry}" for entry in fallback_events)
+            tooltip = (
+                "Rewritten view differs from parser/runtime input due to fallback handling:\n"
+                f"{bullet_lines}"
+            )
+            self.code_tabs.setTabToolTip(2, tooltip)
+        else:
+            tab_bar.setTabTextColor(2, QColor("#0f172a"))
+            self.code_tabs.setTabToolTip(2, "Rewritten source after applying active compatibility rules.")
 
     def _split_save_source(self, source: str | None = None) -> str:
         source = self.original_editor.toPlainText() if source is None else source

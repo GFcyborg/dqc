@@ -6,11 +6,51 @@ from pathlib import Path
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import line_is_inside_blocking_scope, qasm_token_graph, run_runtime_counts, suggest_split_points
+from app.pipeline import line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, run_runtime_counts, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
 class PipelineRegressionTests(unittest.TestCase):
+    def test_parse_fallback_reports_concat_alias_normalization(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include \"stdgates.inc\";',
+                "qubit[2] q;",
+                "let tmp = q[0] ++ q[1];",
+                "x tmp[0];",
+            ]
+        )
+
+        def fake_qiskit_parse(text: str):
+            if "++" in text:
+                raise ValueError("unsupported concat")
+            return {"parsed": True}
+
+        _, _, fallback_events = parse_qiskit_with_pragma_resilience(fake_qiskit_parse, source)
+
+        self.assertIn("++ alias normalization for qiskit parser", fallback_events)
+
+    def test_parse_fallback_reports_line_based_pragma_stripping(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include \"stdgates.inc\";',
+                "pragma user.meta flag=true",
+                "qubit q;",
+                "h q;",
+            ]
+        )
+
+        def fake_qiskit_parse(text: str):
+            self.assertNotIn("pragma", text.lower())
+            return {"parsed": True}
+
+        _, removed_pragmas, fallback_events = parse_qiskit_with_pragma_resilience(fake_qiskit_parse, source)
+
+        self.assertGreater(removed_pragmas, 0)
+        self.assertIn("Pragma stripping (line-based)", fallback_events)
+
     def test_split_guard_blocks_only_inner_scope_line(self) -> None:
         source = "\n".join(
             [

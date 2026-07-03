@@ -859,14 +859,66 @@ make sure that rewriting rules are only applied when active/checked, and skipped
 Also make sure that they get applied in sequence and in a pipeline (each rule takes as input the output of the previous active rule).
 2026.07.03-16.36
 ---------------------------------------------
+Do not change the code now: I just need to understand something, and you'll explain it without changing the code (only analyze it read-only).
+During previous session the chatbot wrote:
+    I identified the breakage point: dependency analysis falls back to empty flows when openqasm3 can’t parse ++ form introduced by rule #8; I’m adding a secondary parse pass using restored index-set aliases specifically for chunk-flow analysis and then adding a regression test on qiskit-example.dqc.
 
+So I need to understand what's this "secondary parse pass" secretely restoring things AFTER they have been rewritten by a rule, and BEFORE analysis/execution. This hidden/implicit step introduces opacity in the processing of the original code, preventing the user to debug issues (because he cannot see the actual rewritten code being analyzed/run).
+Regarding your claim that "openqasm3 can’t parse ++ form introduced by rule #8", I checked online and it seems that qiskit-qasm3-import does support/accept/recognize the "++" concatenation syntax in let-alias expressions, according to: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#5
+So, my questions are:
+- what is this "secondary parse pass" actually doing to the "++" concat expressions?
+- is this "secondary parse pass" actually needed?
+2026.07.03-18.36
+
+[answer:
+yes, there is an implicit parse-only normalization step after rewrite, before some analysis/execution; this "secondary parse pass" in pipeline.py is called concat-to-index-set, converting q[1] ++ q[2] -> q[{1, 2}] only when all concat parts are the same base register and simple indexed terms. The first pass attempt uses rewritten source (as shown), but if it fails and a "++" concat is present, then comes/falls-back to the "secondary parse pass", retrying with the restored alias form.
+This fallback is not visible/written back to rewritten_source; it is only used as an internal retry input for parser. Is it needed: yes. Evidence:
+  openqasm3 parses ++ alias form successfully.
+  qiskit_qasm3_import fails on ++ alias form (ConversionError type error).
+  qiskit_qasm3_import succeeds on restored index-set alias form q[{...}].
+]
+---------------------------------------------
+If you want next, I can do a strictly read-only map of exactly which user actions trigger fallback versus primary parse (with a small decision table tied to functions/branches).
+
+Yes, do it (shortly). Also tell me if there is an easy way for using openqasm3 instead of [or on top of]qiskit_qasm3_import, but don't change the code for now.
+2026.07.03-21.50
+
+[answer:
+app runtime + circuit generation is wired to qiskit importer/executor; openqasm3 is parser/AST only.
+Fallback trigger A: qiskit parse fails and source contains ++.
+    Fallback action A: same alias restoration (++ -> {...}) then retry.
+Fallback trigger B: pragma-related parse failures.
+    Fallback action B: AST-based pragma stripping via openqasm3, then retry.
+Scope: parse-only retry input; not written back to rewritten_source.
+About using openqasm3:
+- Instead of qiskit for runtime/circuit: not really possible, because openqasm3 here is parser/AST only, not the runtime/circuit backend used by the app.
+- On top of qiskit: easy operationally.
+  Option A: pre-validate sources with openqasm3.parse before loading/running.
+  Option B: pre-normalize files from ++ alias form to index-set alias form when needed.
+  Option C: keep current behavior and rely on built-in parse-only fallback.
+So yes, the fallback is implicit and can reduce observability; functionally it exists to keep qiskit path working when ++ alias parsing fails in the importer.
+]
+---------------------------------------------
+It's ok to keep the fallbacks (for ++ and pragma stripping), but the user must be visually informed that the Rewritten code view is not exactly showing what's actually run/drawn. So, if any fallback is triggered, let's format the "Rewritten" tab label in red and bold, also with a mouse-over tooltip listing the triggered fallbacks.
+2026.07.03-22.19
+---------------------------------------------
+fix this console warning:
+(.venv) gf@ant:~/Documents/SPDM801_thesis/dqc$ /home/gf/Documents/SPDM801_thesis/dqc/.venv/bin/python /home/gf/Documents/SPDM801_thesis/dqc/main.py
+line 4:0 no viable alternative at input 'prqubit'
+line 19:0 no viable alternative at input 'prqubit'
+line 16:0 no viable alternative at input 'prqubit'
+line 15:0 no viable alternative at input 'prqubit'
+line 19:0 no viable alternative at input 'prqubit'
+line 15:0 no viable alternative at input 'prqubit'
+line 16:0 no viable alternative at input 'prqubit'
+line 15:0 no viable alternative at input 'prqubit'
+2026.07.03-22.47
+---------------------------------------------
 
 
 
 ================ TODO:
 the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
-
-also: qiskit-qasm3-import should support/accept/recognize the "++" concatenation syntax in let-alias expressions, according to: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#5
 
 the analysis of dependencies is not working well as it wrongly teleports the same qubit from the same source to different destinations, and this is not possibile as it breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 chunks depend on the same source qubit, then it must be moved in a sequence (first a chunk imports the qubit from the source, and then it exports that qubit into the next chunk). Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
 
