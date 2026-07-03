@@ -852,12 +852,14 @@ the line-numbers gutter in the Original code view does not resize automatically 
 rule #8 (array-index set) should be renamed in the Compatibility Rules view, from "Array-index set workaround" to "Array-index set ++concatenation"
 2026.07.03-16.19
 ---------------------------------------------
+upgrade to qiskit 2.5.0 (just released!)
+2026.07.03-16.26
+---------------------------------------------
+
 
 
 ================ TODO:
 the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
-
-upgrade to qiskit 2.5.0
 
 also: qiskit-qasm3-import should support/accept/recognize the "++" concatenation syntax in let-alias expressions, according to: https://quantum.cloud.ibm.com/docs/en/guides/qasm-feature-table#5
 
