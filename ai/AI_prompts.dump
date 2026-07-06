@@ -1012,11 +1012,27 @@ make sure circuit zoom-in works both during and after timeout (same problem as b
 the problem with frozen zoom-in is still there: maybe is not bound to the timeout, because deutsch-jozsa.dqc and qft.dqc are not timing out but they show same problem, even after successful execution.
 2026.07.06-18.02
 ---------------------------------------------
+The chunk dependencies graph should be more coherent with rule #10 (split-generater teleports): the teleportation comments correctly treat the multi-qubit array-var elements individually, while the dependency graph labels the edges in a mixed/incorrect way (using both whole array-vars and their elements).
+Since teleportations are always targeting single qubits, so should the dependency graph do.
+2026.07.06-19.21
+---------------------------------------------
+I still see mixed-type dependencies in the chunk-dep.graph edge labels. If a chunk really depends on a whole multi-qubit array-var (e.g. when measuring it all) from another chunk, then the graph dependency label should mention the array-elements individually, not as a whole array.
+2026.07.06-19.30
+---------------------------------------------
+The runtime buttons should be coherent with their peers of the Runtime menu, showing current value in parentheses in the button label. "Distributed nodes/QPUs (N)" should be renamed in both places, because it's too long: let's call it "Distrib.QPUs (N)".
+2026.07.06-19.39
+---------------------------------------------
+Also menuitem "Run manually" should be unified with its peer button: both should show "Run now".
+Are they actually doing the same thing?
+2026.07.06-19.45
+---------------------------------------------
+The Runtime view buttons do not update when the user changes their related vars (but menuitems do update).
+2026.07.06-19.49
+---------------------------------------------
+
 
 
 ================ TODO:
-adder.dqc execution times out consistently, but its circuit is drawn, even though circuit zoom-in is not available while waiting.
-
 the dependency analysis wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
 This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.
 Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.

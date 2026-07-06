@@ -630,6 +630,26 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertEqual(rendered.count("bit telept_Xcorrect_a0_2;"), 1)
         self.assertEqual(rendered.count("cx a[0], a0_epr_2;"), 1)
 
+    def test_chunk_dependency_labels_expand_array_dependencies_to_single_qubits(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[2] q;",
+            "bit[2] c;",
+            "h q[0];",
+            "measure q -> c;",
+            "x q[1];",
+        ])
+        split_before_lines = {6}
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, True) for rule in DEFAULT_RULES if rule.rule_id != 0]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertTrue(result.chunk_graph.has_edge(1, 2))
+        label = str(result.chunk_graph.edges[(1, 2)].get("label", ""))
+        labels = {entry.strip() for entry in label.split(",") if entry.strip()}
+        self.assertEqual(labels, {"q[0]", "q[1]"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1224,6 +1224,7 @@ class ChunkDagView(QGraphicsView):
         self.setBackgroundBrush(QColor("#f8fbf7"))
         self.setStyleSheet("border: 1px solid #d0d0d0;")
         self._cached_flows: list[Any] = []
+        self._cached_edge_labels: dict[tuple[int, int], list[str]] = {}
         self._cached_font = QFont("DejaVu Sans", 10)
         self._reflow_in_progress = False
         self._last_reflow_viewport_size: QSize | None = None
@@ -1313,10 +1314,11 @@ class ChunkDagView(QGraphicsView):
         if not self._user_interacted:
             self.fit_scene()
 
-    def set_flows(self, flows: list[Any], font: QFont) -> None:
+    def set_flows(self, flows: list[Any], font: QFont, edge_labels: dict[tuple[int, int], list[str]] | None = None) -> None:
         if len(flows) != len(self._cached_flows):
             self._manual_chunk_positions = {}
         self._cached_flows = list(flows)
+        self._cached_edge_labels = dict(edge_labels or {})
         self._cached_font = QFont(font)
         self._last_reflow_viewport_size = self.viewport().size()
         self._user_interacted = False
@@ -1506,10 +1508,13 @@ class ChunkDagView(QGraphicsView):
             }
 
         edge_labels: dict[tuple[int, int], list[str]] = {}
-        for index, flow in enumerate(flows, 1):
-            for name, sources in getattr(flow, "incoming_sources", {}).items():
-                for source in sources:
-                    edge_labels.setdefault((source, index), []).append(name)
+        if self._cached_edge_labels:
+            edge_labels = {key: list(value) for key, value in self._cached_edge_labels.items()}
+        else:
+            for index, flow in enumerate(flows, 1):
+                for name, sources in getattr(flow, "incoming_sources", {}).items():
+                    for source in sources:
+                        edge_labels.setdefault((source, index), []).append(name)
 
         edge_color = QColor("#2f6fff")
         edge_pen = QPen(edge_color)
@@ -2090,8 +2095,8 @@ class ChunkDagTab(QWidget):
             self.view.fitInView(fit_rect, Qt.AspectRatioMode.KeepAspectRatio)
             self.view.centerOn(fit_rect.center())
 
-    def set_flows(self, flows: list[Any], font: QFont) -> None:
-        self.view.set_flows(flows, font)
+    def set_flows(self, flows: list[Any], font: QFont, edge_labels: dict[tuple[int, int], list[str]] | None = None) -> None:
+        self.view.set_flows(flows, font, edge_labels=edge_labels)
 
 
 class QubitInteractionTab(QWidget):

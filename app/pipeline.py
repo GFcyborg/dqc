@@ -1147,18 +1147,11 @@ def split_generated_teleportations(
     incoming_sources = incoming_sources or {}
     qubit_register_names = qubit_register_names or set()
     qubit_register_sizes = qubit_register_sizes or {}
-    dependency_sources_by_name: dict[str, set[int]] = defaultdict(set)
-    barrier_targets: set[str] = set()
-    for name, sources in incoming_sources.items():
-        base_name = re.sub(r"\s*\[[^\]]+\]\s*$", "", name.strip())
-        # Teleportation templates are qubit-only. Skip classical/input/gate symbols.
-        if base_name not in qubit_register_names:
-            continue
-        barrier_targets.add(base_name)
-        expanded_names = _expand_dependency_qubit_names(name, qubit_register_sizes)
-        for expanded_name in expanded_names:
-            for source in sources:
-                dependency_sources_by_name[expanded_name].add(int(source))
+    dependency_sources_by_name = _expand_qubit_dependency_sources(
+        incoming_sources,
+        qubit_register_names,
+        qubit_register_sizes,
+    )
 
     dependency_names = sorted(dependency_sources_by_name)
 
@@ -1194,6 +1187,24 @@ def split_generated_teleportations(
     if for_display:
         lines.append(DQC_TELEPORT_BLOCK_END_SENTINEL)
     return lines
+
+
+def _expand_qubit_dependency_sources(
+    incoming_sources: dict[str, set[int]],
+    qubit_register_names: set[str],
+    qubit_register_sizes: dict[str, int],
+) -> dict[str, set[int]]:
+    dependency_sources_by_name: dict[str, set[int]] = defaultdict(set)
+    for name, sources in (incoming_sources or {}).items():
+        base_name = re.sub(r"\s*\[[^\]]+\]\s*$", "", (name or "").strip())
+        # Teleportation/templates and dependency graph labels are qubit-only.
+        if base_name not in qubit_register_names:
+            continue
+        expanded_names = _expand_dependency_qubit_names(name, qubit_register_sizes)
+        for expanded_name in expanded_names:
+            for source in sources:
+                dependency_sources_by_name[expanded_name].add(int(source))
+    return dependency_sources_by_name
 
 
 def render_dqc_text(raw_text: str, split_before_lines: set[int]) -> str:
@@ -1632,18 +1643,33 @@ def compute_chunk_flows(chunk_texts: list[str], source_text: str, fallback_event
     return flows
 
 
-def build_chunk_dependency_graph(flows: list[ChunkFlow]) -> nx.DiGraph:
+def build_chunk_dependency_graph(
+    flows: list[ChunkFlow],
+    qubit_register_names: set[str] | None = None,
+    qubit_register_sizes: dict[str, int] | None = None,
+) -> nx.DiGraph:
     graph = nx.DiGraph()
+    qubit_register_names = qubit_register_names or set()
+    qubit_register_sizes = qubit_register_sizes or {}
     for index, flow in enumerate(flows, 1):
         graph.add_node(index, label=flow.title, defined=sorted(flow.defined), used=sorted(flow.used))
 
     edge_labels: dict[tuple[int, int], set[str]] = {}
     for index, flow in enumerate(flows, 1):
         for name, sources in flow.incoming_sources.items():
-            for source in sources:
-                if source == index:
-                    continue
-                edge_labels.setdefault((source, index), set()).add(name)
+            if qubit_register_names:
+                expanded = _expand_qubit_dependency_sources(
+                    {name: sources},
+                    qubit_register_names,
+                    qubit_register_sizes,
+                )
+            else:
+                expanded = {name: {int(source) for source in sources}}
+            for expanded_name, expanded_sources in expanded.items():
+                for source in expanded_sources:
+                    if source == index:
+                        continue
+                    edge_labels.setdefault((source, index), set()).add(expanded_name)
 
     for (source, dest), labels in edge_labels.items():
         graph.add_edge(source, dest, label=", ".join(sorted(labels)))
@@ -2129,7 +2155,13 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         display_rewritten_source = dqc_qasm if apply_rule_10 else dqc_source
     else:
         display_rewritten_source = rewritten_source
-    chunk_graph = build_chunk_dependency_graph(chunk_flows)
+    qubit_register_names = extract_qubit_register_names(rewritten_source)
+    qubit_register_sizes = extract_qubit_register_sizes(rewritten_source)
+    chunk_graph = build_chunk_dependency_graph(
+        chunk_flows,
+        qubit_register_names=qubit_register_names,
+        qubit_register_sizes=qubit_register_sizes,
+    )
     parse_tree = None
     issues: list[RewriteSpan] = []
     parse_candidates = [display_rewritten_source]

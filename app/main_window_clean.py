@@ -364,7 +364,30 @@ class MainWindow(QMainWindow):
         runtime_shell = QWidget()
         runtime_layout = QVBoxLayout(runtime_shell)
         runtime_layout.setContentsMargins(0, 0, 0, 0)
-        runtime_layout.addWidget(self._make_header("Runtime", [("Run now", self.run_manual), ("Shots", self.change_shots), ("Timeout", self.change_timeout), ("QPUs", self.change_distributed_nodes)], accent="#10b981", area_name="Runtime"))
+        runtime_header = self._make_header(
+            "Runtime",
+            [
+                ("Run now", self.run_manual),
+                (self._runtime_shots_label(), self.change_shots),
+                (self._runtime_timeout_label(), self.change_timeout),
+                (self._runtime_nodes_label(), self.change_distributed_nodes),
+            ],
+            accent="#10b981",
+            area_name="Runtime",
+        )
+        runtime_layout.addWidget(runtime_header)
+        shots_btn: QPushButton | None = None
+        timeout_btn: QPushButton | None = None
+        nodes_btn: QPushButton | None = None
+        for btn in runtime_header.findChildren(QPushButton):
+            text = btn.text().strip()
+            if text.startswith("Qiskit shots"):
+                shots_btn = btn
+            elif text.startswith("Timeout"):
+                timeout_btn = btn
+            elif text.startswith("Distrib.QPUs"):
+                nodes_btn = btn
+        self._runtime_buttons = (shots_btn, timeout_btn, nodes_btn)
         self.circuit_view = CircuitView()
         self.runtime_output = QPlainTextEdit()
         self.runtime_output.setReadOnly(True)
@@ -728,16 +751,16 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._find_action)
 
         runtime_menu = self.menuBar().addMenu("Runtime")
-        run_action = QAction("Run manually", self)
+        run_action = QAction("Run now", self)
         run_action.triggered.connect(self.run_manual)
         runtime_menu.addAction(run_action)
-        shots_action = QAction(f"Qiskit shots ({self.shots})", self)
+        shots_action = QAction(self._runtime_shots_label(), self)
         shots_action.triggered.connect(self.change_shots)
         runtime_menu.addAction(shots_action)
-        timeout_action = QAction(f"Timeout ({self.timeout_s} s)", self)
+        timeout_action = QAction(self._runtime_timeout_label(), self)
         timeout_action.triggered.connect(self.change_timeout)
         runtime_menu.addAction(timeout_action)
-        nodes_action = QAction(f"Distributed nodes/QPUs ({self.distributed_nodes})", self)
+        nodes_action = QAction(self._runtime_nodes_label(), self)
         nodes_action.triggered.connect(self.change_distributed_nodes)
         runtime_menu.addAction(nodes_action)
         diagnostics_action = QAction("Diagnostics", self)
@@ -1256,7 +1279,16 @@ already declared in the surrounding chunk code.</p>
             self.qubit_graph_view.set_graph(None, lambda node: str(node), empty_message=message)
 
         if chunk_flows:
-            self.chunk_graph_view.set_flows(chunk_flows, self.font())
+            edge_labels: dict[tuple[int, int], list[str]] = {}
+            if chunk_graph is not None:
+                for source, dest, data in chunk_graph.edges(data=True):
+                    raw_label = str((data or {}).get("label", "")).strip()
+                    if not raw_label:
+                        continue
+                    labels = [entry.strip() for entry in raw_label.split(",") if entry.strip()]
+                    if labels:
+                        edge_labels[(int(source), int(dest))] = labels
+            self.chunk_graph_view.set_flows(chunk_flows, self.font(), edge_labels=edge_labels)
         else:
             self.chunk_graph_view.set_graph(chunk_graph, lambda node: str(node), empty_message=result.suggestion_reason or "No chunk dependencies available")
         sorted_suggestions = sorted(result.suggested_split_points)
@@ -1384,15 +1416,35 @@ already declared in the surrounding chunk code.</p>
         QMessageBox.information(self, "Save split chunks", f"Saved split artifacts under {saved_dqc.parent}")
 
     def _update_runtime_menu_labels(self) -> None:
-        if self._runtime_actions is None:
-            return
-        shots_action, timeout_action, nodes_action = self._runtime_actions
-        shots_action.setText(f"Qiskit shots ({self.shots})")
+        shots_label = self._runtime_shots_label()
+        timeout_label = self._runtime_timeout_label()
+        nodes_label = self._runtime_nodes_label()
+
+        if self._runtime_actions is not None:
+            shots_action, timeout_action, nodes_action = self._runtime_actions
+            shots_action.setText(shots_label)
+            timeout_action.setText(timeout_label)
+            nodes_action.setText(nodes_label)
+
+        if self._runtime_buttons is not None:
+            shots_btn, timeout_btn, nodes_btn = self._runtime_buttons
+            if shots_btn is not None:
+                shots_btn.setText(shots_label)
+            if timeout_btn is not None:
+                timeout_btn.setText(timeout_label)
+            if nodes_btn is not None:
+                nodes_btn.setText(nodes_label)
+
+    def _runtime_shots_label(self) -> str:
+        return f"Qiskit shots ({self.shots})"
+
+    def _runtime_timeout_label(self) -> str:
         if self.timeout_s == 0:
-            timeout_action.setText("Timeout (no limit)")
-        else:
-            timeout_action.setText(f"Timeout ({self.timeout_s} s)")
-        nodes_action.setText(f"Distributed nodes/QPUs ({self.distributed_nodes})")
+            return "Timeout (no limit)"
+        return f"Timeout ({self.timeout_s} s)"
+
+    def _runtime_nodes_label(self) -> str:
+        return f"Distrib.QPUs ({self.distributed_nodes})"
 
     def zoom_active(self, delta: int) -> None:
         widget = self.focusWidget()
@@ -1519,12 +1571,12 @@ already declared in the surrounding chunk code.</p>
                 self.statusBar().showMessage(f"Runtime timeout set to {self.timeout_s} seconds", 3000)
 
     def change_distributed_nodes(self) -> None:
-        value, ok = QInputDialog.getInt(self, "Distributed nodes/QPUs", "Number of distributed QPUs:", self.distributed_nodes, 1, 8, 1)
+        value, ok = QInputDialog.getInt(self, "Distrib.QPUs", "Number of distributed QPUs:", self.distributed_nodes, 1, 8, 1)
         if not ok:
             return
         self.distributed_nodes = value
         self._update_runtime_menu_labels()
-        self.statusBar().showMessage(f"Distributed nodes/QPUs set to {self.distributed_nodes}", 3000)
+        self.statusBar().showMessage(f"Distrib.QPUs set to {self.distributed_nodes}", 3000)
         self.refresh()
 
     def run_manual(self) -> None:
