@@ -7,7 +7,7 @@ from itertools import combinations
 from typing import Any, Callable
 from io import BytesIO
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextFormat, QBrush, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -376,6 +376,14 @@ class ZoomableView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._scale_factor = 1.0
+        self._pixel_wheel_accum = 0
+        self._user_interacted = False
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.viewport().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.grabGesture(Qt.GestureType.PinchGesture)
+        self.viewport().grabGesture(Qt.GestureType.PinchGesture)
         self.setBackgroundBrush(QColor("#f8fbff"))
 
     def fit_scene(self) -> None:
@@ -392,9 +400,11 @@ class ZoomableView(QGraphicsView):
             self.fitInView(fit_rect, Qt.AspectRatioMode.KeepAspectRatio)
             self.centerOn(fit_rect.center())
             self._scale_factor = self._current_uniform_scale()
+            self._user_interacted = False
 
     def reset_zoom(self) -> None:
         self.resetTransform()
+        self._user_interacted = False
         self.fit_scene()
 
     def zoom(self, delta: int) -> None:
@@ -407,7 +417,8 @@ class ZoomableView(QGraphicsView):
         if factor < 1.0 and next_scale < fit_scale * 1.000000001:
             self.fit_scene()
             return
-        if 0.12 <= next_scale <= 8.0:
+        if 1e-4 <= next_scale <= 8.0:
+            self._user_interacted = True
             self.scale(factor, factor)
             self._scale_factor = self._current_uniform_scale()
 
@@ -431,8 +442,64 @@ class ZoomableView(QGraphicsView):
         return float(max(1e-6, min(view_w / scene_w, view_h / scene_h)))
 
     def wheelEvent(self, event):  # noqa: N802
-        self.zoom(1 if event.angleDelta().y() > 0 else -1)
+        delta_y = int(event.angleDelta().y())
+        if delta_y != 0:
+            self.zoom(1 if delta_y > 0 else -1)
+            event.accept()
+            return
+
+        pixel_y = int(event.pixelDelta().y())
+        if pixel_y == 0:
+            super().wheelEvent(event)
+            return
+        # Trackpads often emit small pixel deltas; accumulate them to a zoom step.
+        self._pixel_wheel_accum += pixel_y
+        step = 0
+        while abs(self._pixel_wheel_accum) >= 20:
+            step = 1 if self._pixel_wheel_accum > 0 else -1
+            self.zoom(step)
+            self._pixel_wheel_accum -= 20 * step
         event.accept()
+
+    def enterEvent(self, event):  # noqa: N802
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        super().enterEvent(event)
+
+    def event(self, event):  # noqa: N802
+        try:
+            if event.type() == QEvent.Type.NativeGesture and hasattr(event, "gestureType"):
+                if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                    delta = float(getattr(event, "value", lambda: 0.0)())
+                    if abs(delta) > 1e-9:
+                        self.zoom(1 if delta > 0 else -1)
+                        return True
+            if event.type() == QEvent.Type.Gesture and hasattr(event, "gesture"):
+                pinch = event.gesture(Qt.GestureType.PinchGesture)
+                if pinch is not None:
+                    try:
+                        scale_factor = float(pinch.scaleFactor())
+                        last_scale = float(pinch.lastScaleFactor())
+                    except Exception:
+                        scale_factor = 1.0
+                        last_scale = 1.0
+                    if scale_factor > last_scale:
+                        self.zoom(1)
+                    elif scale_factor < last_scale:
+                        self.zoom(-1)
+                    return True
+        except Exception:
+            pass
+        return super().event(event)
+
+    def mousePressEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._user_interacted = True
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        if not self._user_interacted:
+            self.fit_scene()
 
 
 class _PragmaBoldHighlighter(QSyntaxHighlighter):
@@ -1161,6 +1228,7 @@ class ChunkDagView(QGraphicsView):
         self._reflow_in_progress = False
         self._last_reflow_viewport_size: QSize | None = None
         self._manual_chunk_positions: dict[int, QPointF] = {}
+        self._user_interacted = False
 
     def fit_scene(self) -> None:
         scene = self.scene()
@@ -1178,6 +1246,7 @@ class ChunkDagView(QGraphicsView):
         self.centerOn(fit_rect.center())
 
     def reset_zoom(self) -> None:
+        self._user_interacted = False
         self.fit_scene()
 
     def zoom(self, delta: int) -> None:
@@ -1190,7 +1259,8 @@ class ChunkDagView(QGraphicsView):
         if factor < 1.0 and next_scale < fit_scale * 1.000000001:
             self.fit_scene()
             return
-        if 0.12 <= next_scale <= 8.0:
+        if 1e-4 <= next_scale <= 8.0:
+            self._user_interacted = True
             self.scale(factor, factor)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
@@ -1220,26 +1290,42 @@ class ChunkDagView(QGraphicsView):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not self._cached_flows or self._reflow_in_progress:
+        if self._cached_flows and not self._reflow_in_progress:
+            current = self.viewport().size()
+            if self._last_reflow_viewport_size is None:
+                self._last_reflow_viewport_size = current
+                self._render_cached_flows()
+                if not self._user_interacted:
+                    self.fit_scene()
+                return
+            delta_w = abs(current.width() - self._last_reflow_viewport_size.width())
+            delta_h = abs(current.height() - self._last_reflow_viewport_size.height())
+            # Ignore tiny viewport jitter (often caused by scrollbar appearance) to keep layout stable.
+            if max(delta_w, delta_h) >= 24:
+                self._last_reflow_viewport_size = current
+                self._render_cached_flows()
+                if not self._user_interacted:
+                    self.fit_scene()
             return
-        current = self.viewport().size()
-        if self._last_reflow_viewport_size is None:
-            self._last_reflow_viewport_size = current
-            self._render_cached_flows()
-            return
-        delta_w = abs(current.width() - self._last_reflow_viewport_size.width())
-        delta_h = abs(current.height() - self._last_reflow_viewport_size.height())
-        # Ignore tiny viewport jitter (often caused by scrollbar appearance) to keep layout stable.
-        if max(delta_w, delta_h) < 24:
-            return
-        self._last_reflow_viewport_size = current
-        self._render_cached_flows()
+
+        # Generic chunk graph path (non-flow rendering): keep startup and resize behavior
+        # consistent with manual reload by auto-fitting while the user has not zoomed.
+        if not self._user_interacted:
+            self.fit_scene()
 
     def set_flows(self, flows: list[Any], font: QFont) -> None:
         if len(flows) != len(self._cached_flows):
             self._manual_chunk_positions = {}
         self._cached_flows = list(flows)
         self._cached_font = QFont(font)
+        self._last_reflow_viewport_size = self.viewport().size()
+        self._user_interacted = False
+        self._render_cached_flows()
+        self.fit_scene()
+
+    def reflow_layout(self) -> None:
+        if not self._cached_flows:
+            return
         self._last_reflow_viewport_size = self.viewport().size()
         self._render_cached_flows()
         self.fit_scene()
@@ -1993,6 +2079,7 @@ class ChunkDagTab(QWidget):
     def set_graph(self, graph, label_getter: Callable[[Any], str] | None = None, empty_message: str = "No graph available") -> None:
         scene = self.view.scene()
         _draw_graph(scene, graph, label_getter, empty_message, directed=True)
+        self.view._user_interacted = False
         rect = scene.itemsBoundingRect()
         if not rect.isNull():
             margin_x = max(22.0, rect.width() * 0.10)

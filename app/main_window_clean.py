@@ -205,17 +205,20 @@ class MainWindow(QMainWindow):
         self._footer_clear_timer.timeout.connect(self._clear_footer_message)
         self._runtime_state_timer = QTimer(self)
         self._runtime_state_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._runtime_state_timer.setInterval(50)
+        self._runtime_state_timer.setInterval(120)
         self._runtime_state_timer.timeout.connect(self._refresh_runtime_run_state)
         self._runtime_run_token = 0
         self._runtime_run_start_monotonic: float | None = None
         self._runtime_executor: concurrent.futures.ProcessPoolExecutor | None = None
-        self._runtime_future: concurrent.futures.Future[tuple[dict[str, int] | None, str | None, datetime]] | None = None
+        self._runtime_future: concurrent.futures.Future[tuple[dict[str, int] | None, str | None, datetime, str, str]] | None = None
         self._runtime_future_token: int | None = None
         self._runtime_pending_result = None
+        self._runtime_requested_backend = ""
+        self._runtime_retry_attempted = False
         self._runtime_stopwatch_label = QLabel("")
         self._runtime_stopwatch_label.setVisible(False)
         self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
+        self._startup_graph_normalization_done = False
         self._thread_pool = QThreadPool(self)
         self._report_workers: list[ReportWorker] = []
         self._footer_label: QLabel | None = None
@@ -231,6 +234,19 @@ class MainWindow(QMainWindow):
         self.load_file(self.current_file)
         QTimer.singleShot(0, self._apply_initial_split_sizes)
         self.showMaximized()
+
+    @staticmethod
+    def _runtime_backend_fallback_line() -> str:
+        return "AER backends fallback: 1. MPS (Matrix Product State: chain of tensors); 2. default AER (monolithic state-vector)."
+
+    @staticmethod
+    def _normalize_runtime_backend_label(runtime_backend: str) -> str:
+        label = (runtime_backend or "").strip().lower()
+        if label == "mps":
+            return "MPS"
+        if label in {"monolithic", "default aer (statevector-like)", "default aer"}:
+            return "monolithic"
+        return "monolithic"
 
     def _update_window_title(self) -> None:
         self.setWindowTitle(f"DQC Quantum Workbench - {self.current_file.resolve()}")
@@ -444,6 +460,10 @@ class MainWindow(QMainWindow):
         # Re-apply circuit auto-fit after splitter geometry settles.
         self._schedule_circuit_refit()
         self._schedule_circuit_refit(150)
+        # Reflow chunk graph after startup geometry settles, so initial load
+        # uses the same layout basis as a manual file reload.
+        self._schedule_chunk_graph_reflow()
+        self._schedule_chunk_graph_reflow(150)
 
     def _schedule_circuit_refit(self, delay_ms: int = 0) -> None:
         QTimer.singleShot(max(0, delay_ms), self._refit_circuit_view)
@@ -456,6 +476,41 @@ class MainWindow(QMainWindow):
             self.circuit_view.view.fit_scene()
         except Exception:
             return
+
+    def _schedule_chunk_graph_reflow(self, delay_ms: int = 0) -> None:
+        QTimer.singleShot(max(0, delay_ms), self._reflow_chunk_graph_view)
+
+    def _reflow_chunk_graph_view(self) -> None:
+        try:
+            view = self.chunk_graph_view.view
+            if hasattr(view, "reflow_layout"):
+                view.reflow_layout()
+            if hasattr(view, "fit_scene"):
+                view.fit_scene()
+        except Exception:
+            return
+
+    def _schedule_startup_graph_normalization(self, delay_ms: int = 0) -> None:
+        QTimer.singleShot(max(0, delay_ms), self._normalize_startup_graph_views)
+
+    def _normalize_startup_graph_views(self) -> None:
+        if not hasattr(self, "_latest_result"):
+            return
+        try:
+            # Rebuild graph tabs once after the window is shown so they use
+            # settled viewport/splitter geometry (same basis as manual reload).
+            self.refresh_graphs()
+            self._reflow_chunk_graph_view()
+        except Exception:
+            return
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        if self._startup_graph_normalization_done:
+            return
+        self._startup_graph_normalization_done = True
+        self._schedule_startup_graph_normalization()
+        self._schedule_startup_graph_normalization(150)
 
     def _make_header(self, title: str, left_actions: list[tuple[str, Callable[[], None]]], right_widgets: list[QWidget] | None = None, accent: str = "#3b82f6", area_name: str | None = None) -> QWidget:
         widget = QWidget()
@@ -1245,8 +1300,12 @@ already declared in the surrounding chunk code.</p>
                     self._shutdown_runtime_executor()
                     self.runtime_output.setPlainText(summary_text(result, self.shots))
                 else:
-                    self.runtime_output.setPlainText("Running simulation...")
-                    self._start_runtime_run(result)
+                    self.runtime_output.setPlainText(
+                        "Running simulation...\n"
+                        f"{self._runtime_backend_fallback_line()}\n"
+                        "Current AER backend: MPS"
+                    )
+                    self._start_runtime_run(result, preferred_backend="MPS", retry_attempted=False)
             self.circuit_view.show_circuit(result.circuit, result.split_qasm)
             self.refresh_graphs()
             self._update_runtime_menu_labels()
@@ -1529,10 +1588,12 @@ already declared in the surrounding chunk code.</p>
         except Exception:
             pass
 
-    def _start_runtime_run(self, result) -> None:
+    def _start_runtime_run(self, result, preferred_backend: str = "MPS", retry_attempted: bool = False) -> None:
         self._shutdown_runtime_executor()
         self._runtime_run_token += 1
         token = self._runtime_run_token
+        self._runtime_requested_backend = preferred_backend
+        self._runtime_retry_attempted = retry_attempted
         self._runtime_run_start_monotonic = time.perf_counter()
         self._start_runtime_stopwatch()
         self._runtime_state_timer.start()
@@ -1540,9 +1601,15 @@ already declared in the surrounding chunk code.</p>
         self._runtime_pending_result = result
         self._runtime_future_token = token
         self._runtime_executor = concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
-        self._runtime_future = self._runtime_executor.submit(run_runtime_counts, result.split_qasm, dict(self.parameter_bindings), self.shots)
+        self._runtime_future = self._runtime_executor.submit(
+            run_runtime_counts,
+            result.split_qasm,
+            dict(self.parameter_bindings),
+            self.shots,
+            preferred_backend,
+        )
 
-    def _on_runtime_run_finished(self, token: int, counts: dict[str, int] | None, error: str | None, run_timestamp: datetime, run_duration: float | None = None) -> None:
+    def _on_runtime_run_finished(self, token: int, counts: dict[str, int] | None, error: str | None, run_timestamp: datetime, runtime_backend: str = "", runtime_note: str = "", run_duration: float | None = None) -> None:
         if token != self._runtime_run_token:
             return
         result = self._runtime_pending_result
@@ -1554,17 +1621,29 @@ already declared in the surrounding chunk code.</p>
         self._runtime_future = None
         self._runtime_future_token = None
         self._runtime_pending_result = None
+        self._runtime_requested_backend = ""
+        self._runtime_retry_attempted = False
         if result is None:
             return
         if run_duration is not None:
             result.duration_s = run_duration
         result.started_at_utc = run_timestamp.astimezone(timezone.utc)
+        result.runtime_backend = runtime_backend
+        result.runtime_note = runtime_note
         if error:
             self.runtime_output.setPlainText(f"{summary_text(result, self.shots)}\n\nRuntime failed: {error}")
             self._show_status_feedback("Simulation failed.")
             return
         result.counts = counts or {}
-        self.runtime_output.setPlainText(summary_text(result, self.shots))
+        details: list[str] = [summary_text(result, self.shots)]
+        details.append(self._runtime_backend_fallback_line())
+        details.append(f"Current AER backend: {self._normalize_runtime_backend_label(runtime_backend)}")
+        runtime_text = "\n\n".join(details)
+        runtime_text = runtime_text.replace(
+            f"{self._runtime_backend_fallback_line()}\n\nCurrent AER backend:",
+            f"{self._runtime_backend_fallback_line()}\nCurrent AER backend:",
+        )
+        self.runtime_output.setPlainText(runtime_text)
         self._show_status_feedback("Simulation complete.")
 
     def _refresh_runtime_run_state(self) -> None:
@@ -1579,7 +1658,17 @@ already declared in the surrounding chunk code.</p>
             if elapsed >= self.timeout_s and not future.done():
                 result = self._runtime_pending_result
                 run_timestamp = datetime.now(timezone.utc)
+                requested_backend = (self._runtime_requested_backend or "").strip().lower()
                 self._shutdown_runtime_executor()
+                if result is not None and requested_backend == "mps" and not self._runtime_retry_attempted:
+                    self.runtime_output.setPlainText(
+                        "Running simulation...\n"
+                        f"{self._runtime_backend_fallback_line()}\n"
+                        "Current AER backend: monolithic"
+                    )
+                    self._show_status_feedback("MPS timed out: retrying with monolithic backend.")
+                    self._start_runtime_run(result, preferred_backend="monolithic", retry_attempted=True)
+                    return
                 if result is not None:
                     result.started_at_utc = run_timestamp.astimezone(timezone.utc)
                     result.duration_s = elapsed
@@ -1592,12 +1681,14 @@ already declared in the surrounding chunk code.</p>
         if token is None:
             return
         try:
-            counts, error, run_timestamp = future.result()
+            counts, error, run_timestamp, runtime_backend, runtime_note = future.result()
         except Exception as exc:
             counts = None
             error = str(exc)
             run_timestamp = datetime.now(timezone.utc)
-        self._on_runtime_run_finished(token, counts, error, run_timestamp)
+            runtime_backend = ""
+            runtime_note = ""
+        self._on_runtime_run_finished(token, counts, error, run_timestamp, runtime_backend=runtime_backend, runtime_note=runtime_note)
 
     def closeEvent(self, event):  # noqa: N802
         self._shutdown_runtime_executor()

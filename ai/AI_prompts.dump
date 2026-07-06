@@ -933,9 +933,90 @@ the green coloring of rule #8 and #9 is still broken: now it marks too little. t
 I want a general trimming of the python code: why are there many main_window_*.py files? are they all needed, or just leftovers? is there any duplicate code to be merged?
 2026.07.04-01.42
 ---------------------------------------------
+adder.dqc gets drawn but not executed (it times out after 160 sec!): does it need more time or is it just stuck?
+Also: while I wait for the timeout, the circuit (very large) not zoomable.
+2026.07.06-15.44
+---------------------------------------------
+If you want, I can next add a small runtime status hint that explicitly says “simulation backend switched to MPS for large circuits” so this behavior is visible in the Runtime output.
+
+Before I can decide about it, I need to understand what's the meaning of this MPS (matrix_product_state), and why you did give it higher priority than the AER fallback (which I thougt it was the normal/default runtime).
+2026.07.06-16.10
+
+[answer:
+MPS stands for Matrix Product State. Instead of storing the full quantum state as one huge vector, it stores it as a chain of smaller tensors. This can reduce memory dramatically when entanglement is structured/limited.
+The default Aer path (statevector-like behavior) can blow up memory exponentially with qubit count, cuasing:
+    Simulation failed and returned the following error message:
+    ERROR:  [Experiment 0] Insufficient memory to run circuit circuit-42-594000 using the statevector simulator. Required memory: 17179869184M, max memory: 31841M
+I prioritized MPS because it is usually more memory-safe for larger structured circuits like arithmetic-style workloads.
+It improves the chance of getting a result instead of freezing or timing out.
+It also tends to keep the UI more responsive under heavy load.
+AerSimulator() is the default entry point; AerSimulator(method=matrix_product_state) is still Aer, just choosing a specific simulation backend strategy. So this is not replacing Aer, it is selecting a safer Aer method first, then falling back.
+Why keep fallback after MPS? MPS is not always best for every circuit (very high entanglement can hurt MPS performance).
+Keeping a fallback preserves compatibility for cases where default/statevector-style behavior is better or required.
+]
+---------------------------------------------
+Then it's ok to keep the MPS-first and then fallback to default AER (statevector-like), but let's add a small runtime status hint that explicitly says “simulation backend switched to MPS for large circuits”, in the Runtime output.
+Also make sure the GUI (e.g. zoom-in) keeps responsive while the Runtime is executing.
+2026.07.06-16.21
+---------------------------------------------
+I want that Runtime message to be more clear: the MPS acronym must be explained in parentheses.
+Instead of:
+    Runtime note: simulation backend switched to MPS for large circuits.
+    Runtime backend preference: MPS -> default AER (statevector-like fallback).
+Show:
+    AER backends fallback: 1. MPS (Matrix Product State: chain of tensors); 2. default AER (monolithic state-vector).
+    Current AER backend: [MPS | monolithic]
+2026.07.06-16.43
+---------------------------------------------
+The Runtime message is still unclear in its second line: when the simulation starts, the messagge should show which one of the 2 backends it's using (or is the app trying them both at the same time ?). Either:
+    Current AER backend: MPS
+or:
+    Current AER backend: monolithic
+This behavior is already followed at the end of execution, when the Runtime shows e.g.:
+    AER backends fallback: 1. MPS (Matrix Product State: chain of tensors); 2. default AER (monolithic state-vector).
+    Current AER backend: MPS
+But there is a en empty line between those 2 lines, and it must removed.
+2026.07.06-16.53
+---------------------------------------------
+If I got it right, the MPS backend is more robust than the default/monolithic AER, so I don't see any case where MPS would fail and the default AER would succeed running!
+Can you find a case where MPS would fail and the default would succeed? What would happen in that case? MPS will run until it times out, and then the default AER will run again ? How would it work in practice?
+2026.07.06-17.08
+
+[answer:
+Are both backends tried at the same time? No, sequentially, not in parallel. Current order is MPS first, then monolithic fallback. Fallback to monolithic currently happens only for memory-type errors. For non-memory MPS errors, code exits immediately (no second backend attempt). If MPS just runs long and hits GUI timeout, the worker is terminated and fallback is not attempted afterward. Timeout stops execution path; there is no automatic retry on monolithic after timeout.
+You currently get either: MPS success, or memory-error-triggered immediate fallback to monolithic, or timeout/failure with no post-timeout backend retry.
+]
+---------------------------------------------
+bernstein-vazirani.dqc gets drawn but execution times out: the circuit does not allow zoom-in neither during the time-out, nor after it. Are those 2 different problems, or just the same one?
+2026.07.06-17.17
+---------------------------------------------
+If you want, I can now do a focused fix pass specifically for the circuit zoom path on bernstein-vazirani.dqc and make sure zoom works both during and after timeout.
+
+yes, fix them both.
+2026.07.06-17.19
+---------------------------------------------
+when the app starts, it loads by default bell_state.qasm: the size of the chunk dependencies graph is too big on this initial load. The strange part is that, if the user tries to manually load the same file, then the size of that graph is normal (smaller than before). So it looks like something different is happening at app start time.
+2026.07.06-17.42
+---------------------------------------------
+the problem is still there: chunk dependencies graph is too big on app initial load. same as told before.
+fix it and add a regression test.
+2026.07.06-17.45
+---------------------------------------------
+the problem is still there: chunk dependencies graph is too big on app initial load. same as told before.
+fix it and add a better regression test.
+2026.07.06-17.48
+---------------------------------------------
+make sure circuit zoom-in works both during and after timeout (same problem as before).
+2026.07.06-17.55
+---------------------------------------------
+the problem with frozen zoom-in is still there: maybe is not bound to the timeout, because deutsch-jozsa.dqc and qft.dqc are not timing out but they show same problem, even after successful execution.
+2026.07.06-18.02
+---------------------------------------------
 
 
 ================ TODO:
+adder.dqc execution times out consistently, but its circuit is drawn, even though circuit zoom-in is not available while waiting.
+
 the dependency analysis wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
 This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.
 Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.

@@ -1,16 +1,38 @@
-// quantum Fourier transform
+//from: https://claude.ai/chat/e92cbef2-3162-4296-ab27-6b8fadd88af7
+
+OPENQASM 3.0;
 include "stdgates.inc";
-qubit[4] q;
-bit[4] c;
-reset q;
-x q[0];
-x q[2];
-barrier q;
+
+// ── Registri ──────────────────────────────────────────────────────────────
+qubit[3] q;       // q[0], q[1], q[2] : input qubits  (righe superiori)
+qubit    anc;     // q[3]             : ancilla qubit  (riga inferiore)
+bit[3]   c;       // registro classico per le misure
+
+// ── Inizializzazione ancilla: |0⟩ → |1⟩ ──────────────────────────────────
+x anc;
+
+barrier q[0], q[1], q[2], anc;
 /* Teleporting qubits into chunk 2:
+ * anc from chunk 1
  * q[0] from chunk 1
  * q[1] from chunk 1
  * q[2] from chunk 1
  */
+qubit anc_epr_1;
+qubit anc_epr_TARGET_1;
+bit telept_Zcorrect_anc_1;
+bit telept_Xcorrect_anc_1;
+reset anc_epr_1;
+reset anc_epr_TARGET_1;
+h anc_epr_1;
+cx anc_epr_1, anc_epr_TARGET_1;
+cx anc, anc_epr_1;
+h anc;
+telept_Zcorrect_anc_1 = measure anc;
+telept_Xcorrect_anc_1 = measure anc_epr_1;
+if(telept_Zcorrect_anc_1) z anc_epr_TARGET_1;
+if(telept_Xcorrect_anc_1) x anc_epr_TARGET_1;
+// anc teleported into anc_epr_TARGET_1
 qubit q0_epr_1;
 qubit q0_epr_TARGET_1;
 bit telept_Zcorrect_q0_1;
@@ -56,17 +78,43 @@ telept_Xcorrect_q2_1 = measure q2_epr_1;
 if(telept_Zcorrect_q2_1) z q2_epr_TARGET_1;
 if(telept_Xcorrect_q2_1) x q2_epr_TARGET_1;
 // q[2] teleported into q2_epr_TARGET_1
+
+// ── Hadamard su tutti i qubit ─────────────────────────────────────────────
 h q[0];
-cphase(pi / 2) q[1], q[0];
 h q[1];
-cphase(pi / 4) q[2], q[0];
-cphase(pi / 2) q[2], q[1];
+h q[2];
+h anc;
+
+barrier q[0], q[1], q[2], anc;
+
+// ── Oracolo bilanciato  Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂ ───────────────────────
+// Phase kickback: |x⟩|−⟩ → (−1)^{f(x)} |x⟩|−⟩
+cx q[0], anc;
+cx q[1], anc;
+cx q[2], anc;
+
+barrier q[0], q[1], q[2], anc;
 /* Teleporting qubits into chunk 3:
- * q[0] from chunk 2
- * q[1] from chunk 2
- * q[2] from chunk 2
- * q[3] from chunk 1
+ * anc from chunk 2
+ * q[0] from chunks 1, 2
+ * q[1] from chunks 1, 2
+ * q[2] from chunks 1, 2
  */
+qubit anc_epr_2;
+qubit anc_epr_TARGET_2;
+bit telept_Zcorrect_anc_2;
+bit telept_Xcorrect_anc_2;
+reset anc_epr_2;
+reset anc_epr_TARGET_2;
+h anc_epr_2;
+cx anc_epr_2, anc_epr_TARGET_2;
+cx anc, anc_epr_2;
+h anc;
+telept_Zcorrect_anc_2 = measure anc;
+telept_Xcorrect_anc_2 = measure anc_epr_2;
+if(telept_Zcorrect_anc_2) z anc_epr_TARGET_2;
+if(telept_Xcorrect_anc_2) x anc_epr_TARGET_2;
+// anc teleported into anc_epr_TARGET_2
 qubit q0_epr_2;
 qubit q0_epr_TARGET_2;
 bit telept_Zcorrect_q0_2;
@@ -112,30 +160,17 @@ telept_Xcorrect_q2_2 = measure q2_epr_2;
 if(telept_Zcorrect_q2_2) z q2_epr_TARGET_2;
 if(telept_Xcorrect_q2_2) x q2_epr_TARGET_2;
 // q[2] teleported into q2_epr_TARGET_2
-qubit q3_epr_2;
-qubit q3_epr_TARGET_2;
-bit telept_Zcorrect_q3_2;
-bit telept_Xcorrect_q3_2;
-reset q3_epr_2;
-reset q3_epr_TARGET_2;
-h q3_epr_2;
-cx q3_epr_2, q3_epr_TARGET_2;
-cx q[3], q3_epr_2;
-h q[3];
-telept_Zcorrect_q3_2 = measure q[3];
-telept_Xcorrect_q3_2 = measure q3_epr_2;
-if(telept_Zcorrect_q3_2) z q3_epr_TARGET_2;
-if(telept_Xcorrect_q3_2) x q3_epr_TARGET_2;
-// q[3] teleported into q3_epr_TARGET_2
+
+// ── Hadamard inverso sui qubit di input ───────────────────────────────────
+h q[0];
+h q[1];
 h q[2];
-cphase(pi / 8) q[3], q[0];
-cphase(pi / 4) q[3], q[1];
-cphase(pi / 2) q[3], q[2];
+
+barrier q[0], q[1], q[2], anc;
 /* Teleporting qubits into chunk 4:
  * q[0] from chunk 1
  * q[1] from chunk 1
  * q[2] from chunk 1
- * q[3] from chunks 1, 3
  */
 qubit q0_epr_3;
 qubit q0_epr_TARGET_3;
@@ -182,20 +217,7 @@ telept_Xcorrect_q2_3 = measure q2_epr_3;
 if(telept_Zcorrect_q2_3) z q2_epr_TARGET_3;
 if(telept_Xcorrect_q2_3) x q2_epr_TARGET_3;
 // q[2] teleported into q2_epr_TARGET_3
-qubit q3_epr_3;
-qubit q3_epr_TARGET_3;
-bit telept_Zcorrect_q3_3;
-bit telept_Xcorrect_q3_3;
-reset q3_epr_3;
-reset q3_epr_TARGET_3;
-h q3_epr_3;
-cx q3_epr_3, q3_epr_TARGET_3;
-cx q[3], q3_epr_3;
-h q[3];
-telept_Zcorrect_q3_3 = measure q[3];
-telept_Xcorrect_q3_3 = measure q3_epr_3;
-if(telept_Zcorrect_q3_3) z q3_epr_TARGET_3;
-if(telept_Xcorrect_q3_3) x q3_epr_TARGET_3;
-// q[3] teleported into q3_epr_TARGET_3
-h q[3];
+
+// ── Misura (solo i qubit di input; anc non misurata) ─────────────────────
 c = measure q;
+// Atteso per oracolo bilanciato: c ≠ 000  (tipicamente 111 per questo Uf)

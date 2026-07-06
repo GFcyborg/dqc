@@ -167,6 +167,8 @@ class RewriteResult:
     suggested_split_points: list[int] = field(default_factory=list)
     suggestion_reason: str = ""
     fallback_events: list[str] = field(default_factory=list)
+    runtime_backend: str = ""
+    runtime_note: str = ""
 
 
 @dataclass(slots=True)
@@ -1989,22 +1991,43 @@ def _is_aer_memory_error(exc: Exception) -> bool:
     )
 
 
-def _run_aer_counts_with_fallback(compiled: Any, shots: int) -> dict[str, int]:
+def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int], str, str]:
     from qiskit_aer import AerSimulator
 
+    # Keep GUI responsive for large circuits by avoiding an initial run that can
+    # aggressively consume CPU/RAM (statevector). Prefer MPS first, then fall
+    # back to the default simulator if needed.
+    backend_options = {
+        "max_parallel_threads": 1,
+        "max_parallel_experiments": 1,
+        "max_parallel_shots": 1,
+    }
     backends = [
-        AerSimulator(),
-        AerSimulator(method="matrix_product_state"),
+        ("MPS", AerSimulator(method="matrix_product_state", **backend_options)),
+        ("monolithic", AerSimulator(**backend_options)),
     ]
+    preferred = (preferred_backend or "auto").strip().lower()
+    if preferred in {"mps", "monolithic"}:
+        preferred_name = "MPS" if preferred == "mps" else "monolithic"
+        backends = sorted(backends, key=lambda pair: 0 if pair[0] == preferred_name else 1)
     last_exc: Exception | None = None
-    for backend in backends:
+    for backend_name, backend in backends:
         try:
             result = backend.run(compiled, shots=shots).result()
-            return dict(result.get_counts())
+            counts = dict(result.get_counts())
+            # Keep this note explicit and human-readable in Runtime output.
+            runtime_note = ""
+            try:
+                qubits = int(getattr(compiled, "num_qubits", 0) or 0)
+            except Exception:
+                qubits = 0
+            if backend_name == "MPS" and qubits >= 20:
+                runtime_note = "simulation backend switched to MPS for large circuits"
+            return counts, backend_name, runtime_note
         except Exception as exc:
             last_exc = exc
-            if not _is_aer_memory_error(exc):
-                raise
+            # Try the alternative Aer backend before giving up.
+            continue
     if last_exc is not None:
         raise last_exc
     raise RuntimeError("Aer execution failed without a reported exception")
@@ -2017,12 +2040,12 @@ def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | Non
     circuit, _, fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
     circuit = _bind_circuit_parameters(circuit, parameter_bindings)
     compiled = _compile_for_aer_runtime(circuit)
-    counts = _run_aer_counts_with_fallback(compiled, shots)
+    counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots)
     duration_s = time.perf_counter() - start
-    return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s, fallback_events=fallback_events)
+    return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s, fallback_events=fallback_events, runtime_backend=runtime_backend, runtime_note=runtime_note)
 
 
-def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] | None, shots: int) -> tuple[dict[str, int] | None, str | None, datetime]:
+def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] | None, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int] | None, str | None, datetime, str, str]:
     run_timestamp = datetime.now(timezone.utc)
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
@@ -2030,9 +2053,10 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
         circuit, _, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
         circuit = _bind_circuit_parameters(circuit, parameter_bindings)
         compiled = _compile_for_aer_runtime(circuit)
-        return _run_aer_counts_with_fallback(compiled, shots), None, run_timestamp
+        counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots, preferred_backend=preferred_backend)
+        return counts, None, run_timestamp, runtime_backend, runtime_note
     except Exception as exc:
-        return None, str(exc), run_timestamp
+        return None, str(exc), run_timestamp, "", ""
 
 
 def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[int], parameter_bindings: dict[str, str] | None = None, shots: int = 1024, timeout_s: int = 10, execute_runtime: bool = True, distributed_nodes: int = 3) -> RewriteResult:

@@ -1,48 +1,14 @@
-// from: https://github.com/Qiskit/qiskit-qasm3-import
-// WARNING: setting param (a:=0) results in infinite always-true while-loop.
-
-OPENQASM 3.0;
-// The 'stdgates.inc' include is supported, and the gates are only available
-// if it has correctly been included.
+// quantum teleportation example
+OPENQASM 3; // Version statement is optional
 include "stdgates.inc";
-
-// Parametrised inputs are supported.
-input float[64] a;
-
 qubit[3] q;
-bit[2] mid;
-bit[3] out;
-
-// Aliasing and re-aliasing are supported.
-let aliased = q[0:1];
-
-// Parametrised gates that make use of the stdlib.
-gate my_gate(a) c, t {
-  gphase(a / 2);
-  ry(a) c;
-  cx c, t;
-}
-
-// Gate modifiers work as well; this gate is equivalent to `p(-a) c;`.
-gate my_phase(a) c {
-  ctrl @ inv @ gphase(a) c;
-}
-
-// We handle mathematical expressions on gate creation and complex indexing
-// of temporary collections.
-my_gate(a * 2) aliased[0], q[{1, 2}][0];
-measure q[0] -> mid[0];
-measure q[1] -> mid[1];
-
-while (mid == "00") {
-  reset q[0];
-  reset q[1];
-  my_gate(a) q[0], q[1];
-  // We support the builtin mathematical symbols.
-  my_phase(a - pi/2) q[1];
-  mid[0] = measure q[0];
-  mid[1] = measure q[1];
-}
+bit c0;
+bit c1;
+bit c2;
+// optional post-rotation for state tomography
+// empty gate body => identity gate
+gate post q { }
+reset q;
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
@@ -93,18 +59,16 @@ telept_Xcorrect_q2_1 = measure q2_epr_1;
 if(telept_Zcorrect_q2_1) z q2_epr_TARGET_1;
 if(telept_Xcorrect_q2_1) x q2_epr_TARGET_1;
 // q[2] teleported into q2_epr_TARGET_1
-
-// The condition resolver can also handle simple cases that don't look
-// _exactly_ like equality conditions.
-if (mid[0]) {
-  // There is limited support for aliasing within nested scopes.
-  let inner_alias = q[{0, 1}];
-  reset inner_alias;
-}
+U(0.3, 0.2, 0.1) q[0];
+h q[1];
+cx q[1], q[2];
+barrier q;
+cx q[0], q[1];
+h q[0];
 /* Teleporting qubits into chunk 3:
- * q[0] from chunk 1
- * q[1] from chunk 1
- * q[2] from chunk 1
+ * q[0] from chunk 2
+ * q[1] from chunk 2
+ * q[2] from chunk 2
  */
 qubit q0_epr_2;
 qubit q0_epr_TARGET_2;
@@ -151,5 +115,27 @@ telept_Xcorrect_q2_2 = measure q2_epr_2;
 if(telept_Zcorrect_q2_2) z q2_epr_TARGET_2;
 if(telept_Xcorrect_q2_2) x q2_epr_TARGET_2;
 // q[2] teleported into q2_epr_TARGET_2
-
-out = measure q;
+c0 = measure q[0];
+c1 = measure q[1];
+if(c0==1) z q[2];
+if(c1==1) { x q[2]; }  // braces optional in this case
+/* Teleporting qubits into chunk 4:
+ * q[2] from chunk 3
+ */
+qubit q2_epr_3;
+qubit q2_epr_TARGET_3;
+bit telept_Zcorrect_q2_3;
+bit telept_Xcorrect_q2_3;
+reset q2_epr_3;
+reset q2_epr_TARGET_3;
+h q2_epr_3;
+cx q2_epr_3, q2_epr_TARGET_3;
+cx q[2], q2_epr_3;
+h q[2];
+telept_Zcorrect_q2_3 = measure q[2];
+telept_Xcorrect_q2_3 = measure q2_epr_3;
+if(telept_Zcorrect_q2_3) z q2_epr_TARGET_3;
+if(telept_Xcorrect_q2_3) x q2_epr_TARGET_3;
+// q[2] teleported into q2_epr_TARGET_3
+post q[2];
+c2 = measure q[2];

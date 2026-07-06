@@ -1,25 +1,23 @@
-// from: https://en.wikipedia.org/wiki/Deutsch%E2%80%93Jozsa_algorithm
+// from: https://www.youtube.com/watch?v=MvX5OUK-tbE&t=53
 
 OPENQASM 3.0;
 include "stdgates.inc";
 
-// 4 qubit: q[0]=q0, q[1]=q1, q[2]=q2, q[3]=ancilla/target
-qubit[4] q;
-bit[4] c;
+qubit[6] q;
+bit[6] c;
 
-barrier q;
-
-// ── Blocco 1 : scatta per (q0=1, q1=1, q2=0) ─────────────────────────────
-x q[2];                          // controllo negativo su q2
-ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[2];                          // ripristino q2
-
-barrier q;
+h q[0];
+h q[1];
+h q[2];
+h q[3];
+h q[4];
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
  * q[2] from chunk 1
  * q[3] from chunk 1
+ * q[4] from chunk 1
+ * q[5] from chunk 1
  */
 qubit q0_epr_1;
 qubit q0_epr_TARGET_1;
@@ -81,22 +79,52 @@ telept_Xcorrect_q3_1 = measure q3_epr_1;
 if(telept_Zcorrect_q3_1) z q3_epr_TARGET_1;
 if(telept_Xcorrect_q3_1) x q3_epr_TARGET_1;
 // q[3] teleported into q3_epr_TARGET_1
+qubit q4_epr_1;
+qubit q4_epr_TARGET_1;
+bit telept_Zcorrect_q4_1;
+bit telept_Xcorrect_q4_1;
+reset q4_epr_1;
+reset q4_epr_TARGET_1;
+h q4_epr_1;
+cx q4_epr_1, q4_epr_TARGET_1;
+cx q[4], q4_epr_1;
+h q[4];
+telept_Zcorrect_q4_1 = measure q[4];
+telept_Xcorrect_q4_1 = measure q4_epr_1;
+if(telept_Zcorrect_q4_1) z q4_epr_TARGET_1;
+if(telept_Xcorrect_q4_1) x q4_epr_TARGET_1;
+// q[4] teleported into q4_epr_TARGET_1
+qubit q5_epr_1;
+qubit q5_epr_TARGET_1;
+bit telept_Zcorrect_q5_1;
+bit telept_Xcorrect_q5_1;
+reset q5_epr_1;
+reset q5_epr_TARGET_1;
+h q5_epr_1;
+cx q5_epr_1, q5_epr_TARGET_1;
+cx q[5], q5_epr_1;
+h q[5];
+telept_Zcorrect_q5_1 = measure q[5];
+telept_Xcorrect_q5_1 = measure q5_epr_1;
+if(telept_Zcorrect_q5_1) z q5_epr_TARGET_1;
+if(telept_Xcorrect_q5_1) x q5_epr_TARGET_1;
+// q[5] teleported into q5_epr_TARGET_1
 
-// ── Blocco 2 : scatta per (q0=0, q1=0, q2=0) ─────────────────────────────
-x q[0];
-x q[1];
-x q[2];
-ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[0];
-x q[1];
-x q[2];
+x q[5];
+h q[5];
 
-barrier q;
+cx q[5], q[0];
+cx q[5], q[1];
+cx q[5], q[2];
+cx q[5], q[3];
+cx q[5], q[4];
 /* Teleporting qubits into chunk 3:
  * q[0] from chunks 1, 2
  * q[1] from chunks 1, 2
  * q[2] from chunks 1, 2
  * q[3] from chunks 1, 2
+ * q[4] from chunks 1, 2
+ * q[5] from chunks 1, 2
  */
 qubit q0_epr_2;
 qubit q0_epr_TARGET_2;
@@ -158,20 +186,43 @@ telept_Xcorrect_q3_2 = measure q3_epr_2;
 if(telept_Zcorrect_q3_2) z q3_epr_TARGET_2;
 if(telept_Xcorrect_q3_2) x q3_epr_TARGET_2;
 // q[3] teleported into q3_epr_TARGET_2
+qubit q4_epr_2;
+qubit q4_epr_TARGET_2;
+bit telept_Zcorrect_q4_2;
+bit telept_Xcorrect_q4_2;
+reset q4_epr_2;
+reset q4_epr_TARGET_2;
+h q4_epr_2;
+cx q4_epr_2, q4_epr_TARGET_2;
+cx q[4], q4_epr_2;
+h q[4];
+telept_Zcorrect_q4_2 = measure q[4];
+telept_Xcorrect_q4_2 = measure q4_epr_2;
+if(telept_Zcorrect_q4_2) z q4_epr_TARGET_2;
+if(telept_Xcorrect_q4_2) x q4_epr_TARGET_2;
+// q[4] teleported into q4_epr_TARGET_2
+qubit q5_epr_2;
+qubit q5_epr_TARGET_2;
+bit telept_Zcorrect_q5_2;
+bit telept_Xcorrect_q5_2;
+reset q5_epr_2;
+reset q5_epr_TARGET_2;
+h q5_epr_2;
+cx q5_epr_2, q5_epr_TARGET_2;
+cx q[5], q5_epr_2;
+h q[5];
+telept_Zcorrect_q5_2 = measure q[5];
+telept_Xcorrect_q5_2 = measure q5_epr_2;
+if(telept_Zcorrect_q5_2) z q5_epr_TARGET_2;
+if(telept_Xcorrect_q5_2) x q5_epr_TARGET_2;
+// q[5] teleported into q5_epr_TARGET_2
 
-// ── Blocco 3 : scatta per (q0=0, q1=1, q2=0) ─────────────────────────────
-x q[0];
-x q[2];
-ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[0];
-x q[2];
-
-barrier q;
-
-// ── Blocco 4 : scatta per (q0=1, q1=0, q2=1) ─────────────────────────────
-x q[1];
-ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[1];
+h q[0];
+h q[1];
+h q[2];
+h q[3];
+h q[4];
+h q[5];
 
 barrier q;
 
