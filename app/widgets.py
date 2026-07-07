@@ -819,7 +819,7 @@ class HtmlCodeView(QTextBrowser):
         snippet_tooltips: dict[str, list[tuple[int, str]]] = {}
         snippet_fragments: dict[str, list[str]] = {}
         line_rule_ids: dict[int, set[int]] = {}
-        teleport_tooltip = "Rule 10: split pragma rewritten into teleportation comment block"
+        teleport_tooltip = "Rule 11: split pragma rewritten into teleportation comment block"
         for span in spans:
             rewritten = str(getattr(span, "rewritten", ""))
             if not rewritten.strip():
@@ -865,7 +865,7 @@ class HtmlCodeView(QTextBrowser):
             line_no = idx + 1
             self._teleport_lines.add(line_no)
             tooltip_map.setdefault(line_no, []).append(teleport_tooltip)
-            line_rule_ids.setdefault(line_no, set()).add(10)
+            line_rule_ids.setdefault(line_no, set()).add(11)
             visible_lines.add(line_no)
 
         line_index = 0
@@ -953,7 +953,7 @@ class HtmlCodeView(QTextBrowser):
                 # appear in the Rewritten code view.
                 line_index += 1
                 continue
-            if line_no in self._teleport_lines or 10 in line_rule_ids.get(line_no, set()):
+            if line_no in self._teleport_lines or 11 in line_rule_ids.get(line_no, set()):
                 decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
             elif line_no in partial_highlights:
                 decorated.append(_highlight_snippets(line, partial_highlights[line_no]))
@@ -1009,7 +1009,7 @@ class RulePanel(QFrame):
             row_layout.setSpacing(8)
             check = QCheckBox(f"{rule.rule_id}. {rule.name}")
             check.setChecked(rule.enabled)
-            if rule.rule_id == 10:
+            if rule.rule_id == 11:
                 check.setStyleSheet("color: #0f172a; font-weight: bold; text-decoration: underline;")
             else:
                 check.setStyleSheet("color: #0f172a;")
@@ -1030,11 +1030,11 @@ class RulePanel(QFrame):
             check.blockSignals(False)
             if bypass and rule_id != 0:
                 check.setEnabled(False)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 10 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
                 check.setStyleSheet(f"color: #94a3b8;{extra}")
             else:
                 check.setEnabled(True)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 10 else ""
+                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
                 check.setStyleSheet(f"color: #0f172a;{extra}")
 
 

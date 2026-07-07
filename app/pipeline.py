@@ -201,7 +201,8 @@ DEFAULT_RULES = [
     RuleState(7, "Uint Workaround", "Lower uint declarations/usages into importer-safe forms (const folding, loop unrolling, and guard simplification)."),
     RuleState(8, "Inline let-aliases", "Drop let alias declarations and inline subsequent alias references to their aliased value."),
     RuleState(9, "Resolve chained indexing", "Resolve chained indexing like `q[2:5][1]` and `q[{1,2}][0]` to direct element references."),
-    RuleState(10, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
+    RuleState(10, "Unfold broadcast operations", "Unfold broadcast-style operations (reset, barrier, measure) into explicit per-qubit operations."),
+    RuleState(11, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
 
 
@@ -867,6 +868,14 @@ LET_ALIAS_DECL_PATTERN = re.compile(
 CHAINED_INDEX_PATTERN = re.compile(
     r"\b(?P<base>[A-Za-z_][A-Za-z0-9_]*)\s*\[(?P<first>[^\]]+)\]\s*\[(?P<second>[^\]]+)\]"
 )
+BROADCAST_RESET_PATTERN = re.compile(r"^(?P<indent>\s*)reset\s+(?P<target>[^;]+?)\s*;(?P<tail>\s*(?://.*)?)$")
+BROADCAST_BARRIER_PATTERN = re.compile(r"^(?P<indent>\s*)barrier\s+(?P<targets>[^;]+?)\s*;(?P<tail>\s*(?://.*)?)$")
+BROADCAST_MEASURE_ARROW_PATTERN = re.compile(
+    r"^(?P<indent>\s*)measure\s+(?P<qubits>[^;]+?)\s*->\s*(?P<bits>[^;]+?)\s*;(?P<tail>\s*(?://.*)?)$"
+)
+BROADCAST_MEASURE_ASSIGN_PATTERN = re.compile(
+    r"^(?P<indent>\s*)(?P<bits>[A-Za-z_][A-Za-z0-9_]*(?:\s*\[[^\]]+\])?)\s*=\s*measure\s+(?P<qubits>[^;]+?)\s*;(?P<tail>\s*(?://.*)?)$"
+)
 
 
 def _replace_alias_references(code: str, aliases: dict[str, str]) -> str:
@@ -1026,10 +1035,148 @@ def rewrite_resolve_chained_indexing(lines: list[str], enabled: bool, spans: lis
     return rewritten_lines
 
 
+def _expand_register_operand(token: str, register_sizes: dict[str, int]) -> list[str] | None:
+    normalized = (token or "").strip()
+    if not normalized:
+        return None
+    match = re.fullmatch(r"(?P<base>[A-Za-z_][A-Za-z0-9_]*)(?:\s*\[\s*(?P<selector>[^\]]+)\s*\])?", normalized)
+    if not match:
+        return None
+    base = match.group("base")
+    selector = match.group("selector")
+    size = register_sizes.get(base)
+    if selector is None:
+        if size is None or size <= 1:
+            return [base]
+        return [f"{base}[{index}]" for index in range(size)]
+    values = _parse_selector_values(selector)
+    if values is None:
+        return None
+    if size is not None and size > 0:
+        values = [value for value in values if 0 <= value < size]
+    if not values:
+        return []
+    return [f"{base}[{value}]" for value in values]
+
+
+def rewrite_unfold_broadcast_operations(lines: list[str], enabled: bool, spans: list[RewriteSpan]) -> list[str]:
+    if not enabled:
+        return lines
+
+    code_lines, _ = _comment_aware_code_and_spans(lines)
+    current_source = "\n".join(lines)
+    qubit_sizes = extract_qubit_register_sizes(current_source)
+    bit_sizes = extract_bit_register_sizes(current_source)
+    rewritten_lines: list[str] = []
+
+    for line_no, line in enumerate(lines, start=1):
+        code_only = code_lines[line_no - 1].rstrip()
+        if not code_only.strip():
+            rewritten_lines.append(line)
+            continue
+
+        reset_match = BROADCAST_RESET_PATTERN.match(code_only)
+        if reset_match:
+            expanded = _expand_register_operand(reset_match.group("target"), qubit_sizes)
+            if expanded is not None and len(expanded) > 1:
+                emitted = [f"{reset_match.group('indent')}reset {target};" for target in expanded]
+                if reset_match.group("tail"):
+                    emitted[-1] = f"{emitted[-1]}{reset_match.group('tail')}"
+                rewritten_lines.extend(emitted)
+                spans.append(
+                    RewriteSpan(
+                        line_no,
+                        line,
+                        "\n".join(emitted),
+                        10,
+                        "Unfolded broadcast reset into explicit per-qubit resets.",
+                    )
+                )
+                continue
+
+        barrier_match = BROADCAST_BARRIER_PATTERN.match(code_only)
+        if barrier_match:
+            expanded_targets: list[str] = []
+            changed = False
+            for token in [part.strip() for part in barrier_match.group("targets").split(",") if part.strip()]:
+                expanded = _expand_register_operand(token, qubit_sizes)
+                if expanded is None:
+                    expanded_targets.append(token)
+                    continue
+                if len(expanded) != 1 or expanded[0] != token:
+                    changed = True
+                expanded_targets.extend(expanded)
+            if changed and expanded_targets:
+                emitted_line = f"{barrier_match.group('indent')}barrier {', '.join(expanded_targets)};{barrier_match.group('tail')}"
+                rewritten_lines.append(emitted_line)
+                spans.append(
+                    RewriteSpan(
+                        line_no,
+                        line,
+                        emitted_line,
+                        10,
+                        "Unfolded broadcast barrier into explicit qubit operands.",
+                    )
+                )
+                continue
+
+        measure_arrow = BROADCAST_MEASURE_ARROW_PATTERN.match(code_only)
+        if measure_arrow:
+            expanded_qubits = _expand_register_operand(measure_arrow.group("qubits"), qubit_sizes)
+            expanded_bits = _expand_register_operand(measure_arrow.group("bits"), bit_sizes)
+            if expanded_qubits is not None and expanded_bits is not None and len(expanded_qubits) == len(expanded_bits) and len(expanded_qubits) > 1:
+                emitted = [
+                    f"{measure_arrow.group('indent')}measure {qubit} -> {bit};"
+                    for qubit, bit in zip(expanded_qubits, expanded_bits)
+                ]
+                if measure_arrow.group("tail"):
+                    emitted[-1] = f"{emitted[-1]}{measure_arrow.group('tail')}"
+                rewritten_lines.extend(emitted)
+                spans.append(
+                    RewriteSpan(
+                        line_no,
+                        line,
+                        "\n".join(emitted),
+                        10,
+                        "Unfolded broadcast measurement into explicit per-qubit measurements.",
+                    )
+                )
+                continue
+
+        measure_assign = BROADCAST_MEASURE_ASSIGN_PATTERN.match(code_only)
+        if measure_assign:
+            expanded_qubits = _expand_register_operand(measure_assign.group("qubits"), qubit_sizes)
+            expanded_bits = _expand_register_operand(measure_assign.group("bits"), bit_sizes)
+            if expanded_qubits is not None and expanded_bits is not None and len(expanded_qubits) == len(expanded_bits) and len(expanded_qubits) > 1:
+                emitted = [
+                    f"{measure_assign.group('indent')}{bit} = measure {qubit};"
+                    for bit, qubit in zip(expanded_bits, expanded_qubits)
+                ]
+                if measure_assign.group("tail"):
+                    emitted[-1] = f"{emitted[-1]}{measure_assign.group('tail')}"
+                rewritten_lines.extend(emitted)
+                spans.append(
+                    RewriteSpan(
+                        line_no,
+                        line,
+                        "\n".join(emitted),
+                        10,
+                        "Unfolded broadcast measurement assignment into explicit per-qubit assignments.",
+                    )
+                )
+                continue
+
+        rewritten_lines.append(line)
+
+    return rewritten_lines
+
+
 def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, int, int]]]:
     lines = normalize_lines(source)
     matches: dict[int, list[tuple[int, str, int, int]]] = defaultdict(list)
     code_lines, comment_spans = _comment_aware_code_and_spans(lines)
+    qubit_sizes = extract_qubit_register_sizes(source)
+    bit_sizes = extract_bit_register_sizes(source)
     bit_names = {match.group(1) for match in BIT_DECL_PATTERN.finditer(source)}
     colliding_gate_names: set[str] = set()
     for code_line in code_lines:
@@ -1045,7 +1192,7 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         pragma_match = DQC_PRAGMA_PATTERN.match(line)
         if pragma_match:
-            matches[line_no].append((10, "Split-generated teleportations", 0, len(line)))
+            matches[line_no].append((11, "Split-generated teleportations", 0, len(line)))
 
         for start, end in comment_spans.get(line_no, []):
             matches[line_no].append((1, "Drop comments", start, end))
@@ -1073,6 +1220,37 @@ def original_line_rule_matches(source: str) -> dict[int, list[tuple[int, str, in
 
         for chained_index_match in CHAINED_INDEX_PATTERN.finditer(code_only):
             matches[line_no].append((9, "Resolve chained indexing", chained_index_match.start(), chained_index_match.end()))
+
+        reset_match = BROADCAST_RESET_PATTERN.match(code_only.rstrip())
+        if reset_match:
+            expanded = _expand_register_operand(reset_match.group("target"), qubit_sizes)
+            if expanded is not None and len(expanded) > 1:
+                matches[line_no].append((10, "Unfold broadcast operations", reset_match.start("target"), reset_match.end("target")))
+
+        barrier_match = BROADCAST_BARRIER_PATTERN.match(code_only.rstrip())
+        if barrier_match:
+            any_expanded = False
+            for token in [part.strip() for part in barrier_match.group("targets").split(",") if part.strip()]:
+                expanded = _expand_register_operand(token, qubit_sizes)
+                if expanded is not None and len(expanded) > 1:
+                    any_expanded = True
+                    break
+            if any_expanded:
+                matches[line_no].append((10, "Unfold broadcast operations", barrier_match.start("targets"), barrier_match.end("targets")))
+
+        measure_arrow = BROADCAST_MEASURE_ARROW_PATTERN.match(code_only.rstrip())
+        if measure_arrow:
+            expanded_q = _expand_register_operand(measure_arrow.group("qubits"), qubit_sizes)
+            expanded_c = _expand_register_operand(measure_arrow.group("bits"), bit_sizes)
+            if expanded_q is not None and expanded_c is not None and len(expanded_q) == len(expanded_c) and len(expanded_q) > 1:
+                matches[line_no].append((10, "Unfold broadcast operations", measure_arrow.start("qubits"), measure_arrow.end("bits")))
+
+        measure_assign = BROADCAST_MEASURE_ASSIGN_PATTERN.match(code_only.rstrip())
+        if measure_assign:
+            expanded_q = _expand_register_operand(measure_assign.group("qubits"), qubit_sizes)
+            expanded_c = _expand_register_operand(measure_assign.group("bits"), bit_sizes)
+            if expanded_q is not None and expanded_c is not None and len(expanded_q) == len(expanded_c) and len(expanded_q) > 1:
+                matches[line_no].append((10, "Unfold broadcast operations", measure_assign.start("bits"), measure_assign.end("qubits")))
 
     alias_decl_lines: dict[str, int] = {}
     for line_no, code_only in enumerate(code_lines, start=1):
@@ -1292,6 +1470,22 @@ def extract_qubit_register_sizes(source: str) -> dict[str, int]:
             sizes[sized.group(2)] = int(sized.group(1))
             continue
         scalar = re.match(r"^\s*qubit\s+([A-Za-z_][A-Za-z0-9_]*)\b", line)
+        if scalar:
+            sizes[scalar.group(1)] = 1
+    return sizes
+
+
+def extract_bit_register_sizes(source: str) -> dict[str, int]:
+    sizes: dict[str, int] = {}
+    for line in normalize_lines(source):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        sized = re.match(r"^\s*bit\s*\[\s*(\d+)\s*\]\s*([A-Za-z_][A-Za-z0-9_]*)\b", line)
+        if sized:
+            sizes[sized.group(2)] = int(sized.group(1))
+            continue
+        scalar = re.match(r"^\s*bit\s+([A-Za-z_][A-Za-z0-9_]*)\b", line)
         if scalar:
             sizes[scalar.group(1)] = 1
     return sizes
@@ -2143,6 +2337,8 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
                 split_lines = remap_split_points(split_lines, kept_line_numbers)
             elif rule_id == 9:
                 rewritten = rewrite_resolve_chained_indexing(rewritten, True, spans)
+            elif rule_id == 10:
+                rewritten = rewrite_unfold_broadcast_operations(rewritten, True, spans)
     rewritten_source = "\n".join(rewritten)
     rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
     dqc_source = add_split_markers(rewritten_no_pragmas, split_lines)
@@ -2150,9 +2346,9 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     fallback_events_set: set[str] = set()
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source, fallback_events=fallback_events_set)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
-    apply_rule_10 = 10 in active_rule_ids
+    apply_rule_teleports = 11 in active_rule_ids
     if split_lines:
-        display_rewritten_source = dqc_qasm if apply_rule_10 else dqc_source
+        display_rewritten_source = dqc_qasm if apply_rule_teleports else dqc_source
     else:
         display_rewritten_source = rewritten_source
     qubit_register_names = extract_qubit_register_names(rewritten_source)
@@ -2165,7 +2361,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     parse_tree = None
     issues: list[RewriteSpan] = []
     parse_candidates = [display_rewritten_source]
-    if apply_rule_10 and dqc_source not in parse_candidates:
+    if apply_rule_teleports and dqc_source not in parse_candidates:
         parse_candidates.append(dqc_source)
     if rewritten_source not in parse_candidates:
         parse_candidates.append(rewritten_source)
@@ -2188,7 +2384,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         from qiskit_qasm3_import import parse as qiskit_parse
 
         runtime_candidates = [display_rewritten_source]
-        if apply_rule_10 and dqc_source not in runtime_candidates:
+        if apply_rule_teleports and dqc_source not in runtime_candidates:
             runtime_candidates.append(dqc_source)
         if rewritten_source not in runtime_candidates:
             runtime_candidates.append(rewritten_source)

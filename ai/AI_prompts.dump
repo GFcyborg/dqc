@@ -1029,11 +1029,20 @@ Are they actually doing the same thing?
 The Runtime view buttons do not update when the user changes their related vars (but menuitems do update).
 2026.07.06-19.49
 ---------------------------------------------
+Our split-gen.teleports (rule #10) always handle inter-chunk qubit-dependencies individually, so they don't cooperate well with broadcast operators acting on multi-qubit arrays (instead of individually, on single qubits). We need to add a new rule (into position #10, so pushing current rule #10 (split-gen.teleports) into position #11), in order to unfold all broadcast syntax (i.e.: reset, barrier, measure, ...). Make sure this new rule #10 works as usual in the rule-pipeline (taking in the preceeding rules' output), so that it cooperates gracefully with other rules, unfolding only the qubits actually involved in the broadcast, e.g. qiskit-example.qasm lines #51-52 (where rule #8 (let-aliases) is used).
+2026.07.07-08.32
+---------------------------------------------
+
 
 
 
 ================ TODO:
-the dependency analysis wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law; instead the dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
+add a new rule: When the original code operates on a multi-qubit array-var, rewrite it into a sequence of individual 1-qubit elements.
+
+the dependency analysis (both in rule #10 split-gen.teleports, and in the deps.graph) wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law: once a chunk has transferred a qubit state to another chunk (via teleportation), its state only lives in this last chunk, so the first chunk cannot export the same qubit again to any other chunk (without first receiving it back).
+the injected teleportations (by rule #10) do transfer the original state into a new qubit var 
+
+The dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
 This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.
 Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
 

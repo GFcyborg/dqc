@@ -22,7 +22,7 @@ class _CaptureHtmlCodeView(HtmlCodeView):
 
 
 class RewrittenColoringRegressionTests(unittest.TestCase):
-    def test_non_teleport_rules_render_green_and_rule9_renders_orange(self) -> None:
+    def test_non_teleport_rules_render_green_and_rule11_renders_orange(self) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         _app = QApplication.instance() or QApplication([])
 
@@ -64,7 +64,7 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
                 8,
                 "pragma dqc.v1.split id=1",
                 "/* Teleporting qubits into chunk 2:\n * q[0] from chunk 1\n */",
-                10,
+                11,
                 "split pragma rewritten into teleportation comment block",
             ),
         ]
@@ -114,7 +114,8 @@ class RewrittenColoringRegressionTests(unittest.TestCase):
         html = view.captured_html
 
         self.assertIn("my_gate(a * 2) <span style='color:#22c55e'>q[0]</span>, <span style='color:#22c55e'>q[1]</span>;", html)
-        self.assertIn("reset <span style='color:#22c55e'>q[{0, 1}]</span>;", html)
+        self.assertIn("<span style='color:#22c55e'>  reset q[0];</span>", html)
+        self.assertIn("<span style='color:#22c55e'>  reset q[1];</span>", html)
 
 
 if __name__ == "__main__":

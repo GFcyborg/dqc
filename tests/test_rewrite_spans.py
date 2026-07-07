@@ -17,28 +17,31 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn(9, rule_names)
         self.assertEqual(rule_names[9], "Resolve chained indexing")
         self.assertIn(10, rule_names)
-        self.assertEqual(rule_names[10], "Split-generated teleportations")
+        self.assertEqual(rule_names[10], "Unfold broadcast operations")
+        self.assertIn(11, rule_names)
+        self.assertEqual(rule_names[11], "Split-generated teleportations")
         self.assertIn(6, rule_names)
         self.assertEqual(rule_names[6], "Bit-to-bool Cast")
         self.assertIn(7, rule_names)
         self.assertEqual(rule_names[7], "Uint Workaround")
 
     def test_split_generated_teleport_rule_is_listed_last_in_default_rules(self) -> None:
-        self.assertEqual(DEFAULT_RULES[-1].rule_id, 10)
+        self.assertEqual(DEFAULT_RULES[-1].rule_id, 11)
 
     def test_default_rule_ids_are_contiguous(self) -> None:
         self.assertEqual([rule.rule_id for rule in DEFAULT_RULES], list(range(len(DEFAULT_RULES))))
 
     def test_active_rules_are_processed_in_numeric_order(self) -> None:
         rules = [
-            RuleState(10, "Split-generated teleportations", "", True),
+            RuleState(11, "Split-generated teleportations", "", True),
+            RuleState(10, "Unfold broadcast operations", "", True),
             RuleState(9, "Resolve chained indexing", "", True),
             RuleState(8, "Inline let-aliases", "", True),
             RuleState(7, "Uint Workaround", "", True),
             RuleState(6, "Bit-to-bool Cast", "", True),
             RuleState(1, "Drop comments", "", True),
         ]
-        self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8, 9, 10])
+        self.assertEqual(ordered_active_rule_ids(rules), [1, 6, 7, 8, 9, 10, 11])
 
     def test_unchecked_rules_are_skipped(self) -> None:
         source = "\n".join([
@@ -182,7 +185,7 @@ class RewriteSpanTests(unittest.TestCase):
             ["OPENQASM 3.1;", "qubit[1] q;", "pragma dqc.v1.split id=1", "x q[0];"],
         )
 
-    def test_original_rule_matches_include_split_pragma_as_rule_ten(self) -> None:
+    def test_original_rule_matches_include_split_pragma_as_rule_eleven(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -193,9 +196,9 @@ class RewriteSpanTests(unittest.TestCase):
         matches = original_line_rule_matches(source)
 
         self.assertIn(3, matches)
-        self.assertTrue(any(rule_id == 10 for rule_id, _, _, _ in matches[3]))
+        self.assertTrue(any(rule_id == 11 for rule_id, _, _, _ in matches[3]))
 
-    def test_rule_ten_remaps_split_points_through_header_and_include_insertion(self) -> None:
+    def test_rule_eleven_remaps_split_points_through_header_and_include_insertion(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "qubit[1] q;",
@@ -208,7 +211,7 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertIn("* q[0] from chunk 1", result.rewritten_source)
 
-    def test_disabled_rule_ten_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
+    def test_disabled_rule_eleven_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
             "include \"stdgates.inc\";",
@@ -219,7 +222,7 @@ class RewriteSpanTests(unittest.TestCase):
         ])
         split_before_lines = {5}
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 10))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 11))
             for rule in DEFAULT_RULES
         ]
 
@@ -241,7 +244,7 @@ class RewriteSpanTests(unittest.TestCase):
             "measure q[0] -> c[0];",
         ])
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 10))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 11))
             for rule in DEFAULT_RULES
         ]
 
@@ -262,7 +265,7 @@ class RewriteSpanTests(unittest.TestCase):
             "measure q[0] -> c[0];",
         ])
         rules = [
-            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 10))
+            RuleState(rule.rule_id, rule.name, rule.description, (rule.rule_id != 0 and rule.rule_id != 11))
             for rule in DEFAULT_RULES
         ]
 
@@ -290,6 +293,44 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("if(c) {}", result.rewritten_source)
         self.assertIn("if(!mid[0]) {}", result.rewritten_source)
         self.assertTrue(any(span.rule_id == 6 and "boolean cast" in span.message for span in result.spans))
+
+    def test_rule10_unfolds_broadcast_reset_barrier_and_measure_assign(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[3] q;",
+            "bit[3] out;",
+            "let inner_alias = q[{0, 1}];",
+            "reset inner_alias;",
+            "barrier q;",
+            "out = measure q;",
+        ])
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertIn("reset q[0];", result.rewritten_source)
+        self.assertIn("reset q[1];", result.rewritten_source)
+        self.assertIn("barrier q[0], q[1], q[2];", result.rewritten_source)
+        self.assertIn("out[0] = measure q[0];", result.rewritten_source)
+        self.assertIn("out[1] = measure q[1];", result.rewritten_source)
+        self.assertIn("out[2] = measure q[2];", result.rewritten_source)
+        self.assertTrue(any(span.rule_id == 10 for span in result.spans))
+
+    def test_original_rule_matches_marks_broadcast_lines_as_rule_ten(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[2] q;",
+            "bit[2] c;",
+            "reset q;",
+            "measure q -> c;",
+        ])
+
+        matches = original_line_rule_matches(source)
+
+        self.assertTrue(any(rule_id == 10 for rule_id, _, _, _ in matches[5]))
+        self.assertTrue(any(rule_id == 10 for rule_id, _, _, _ in matches[6]))
 
     def test_original_line_rule_matches_reports_plural_rule_references(self) -> None:
         source = "\n".join([

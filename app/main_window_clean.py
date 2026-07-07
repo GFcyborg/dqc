@@ -860,7 +860,7 @@ class MainWindow(QMainWindow):
 
 <p>The file <code style='color:#1e3a8a;'>{template_path.name}</code>
 (located at <code>{template_path}</code>) defines a single quantum teleportation
-circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#9 (Split-generated teleportations)</b>
+circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#11 (Split-generated teleportations)</b>
 reads this template and injects one adapted copy for <em>each qubit dependency</em>
 that must cross a split-point boundary.</p>
 
