@@ -1718,6 +1718,7 @@ class QiskitDagView(QGraphicsView):
             wire_text = _wire_label(wire)
             label = scene.addSimpleText(wire_text)
             label_font = QFont(node_font)
+            label_font.setPointSizeF(max(14.0, label_font.pointSizeF() + 6.0))
             if wire in qubits:
                 label_font.setBold(True)
                 label.setBrush(QBrush(QColor("#1f5f2d")))
@@ -1958,6 +1959,7 @@ class MultiQubitInteractionView(QiskitDagView):
 
             label = QGraphicsSimpleTextItem(_wire_label(qubit), group)
             qubit_font = QFont(node_font)
+            qubit_font.setPointSizeF(max(18.0, qubit_font.pointSizeF() + 6.0))
             qubit_font.setBold(True)
             label.setFont(qubit_font)
             label.setBrush(QBrush(QColor("#1f5f2d")))

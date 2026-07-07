@@ -1032,13 +1032,26 @@ The Runtime view buttons do not update when the user changes their related vars 
 Our split-gen.teleports (rule #10) always handle inter-chunk qubit-dependencies individually, so they don't cooperate well with broadcast operators acting on multi-qubit arrays (instead of individually, on single qubits). We need to add a new rule (into position #10, so pushing current rule #10 (split-gen.teleports) into position #11), in order to unfold all broadcast syntax (i.e.: reset, barrier, measure, ...). Make sure this new rule #10 works as usual in the rule-pipeline (taking in the preceeding rules' output), so that it cooperates gracefully with other rules, unfolding only the qubits actually involved in the broadcast, e.g. qiskit-example.qasm lines #51-52 (where rule #8 (let-aliases) is used).
 2026.07.07-08.32
 ---------------------------------------------
+slightly increase to font size of:
+- the wire labels in the DAG graph;
+- the node labels of qubit interaction graph.
+2026.07.07-08.52
+---------------------------------------------
+still too little: increase the font size a little bit more.
+2026.07.07-08.54
+---------------------------------------------
+still too little: increase the font size some more.
+2026.07.07-08.56
+---------------------------------------------
+still too little: are you sure that you are increasing the right font? I don't see any difference.
+increase the font size some more.
+2026.07.07-08.58
+---------------------------------------------
 
 
 
 
 ================ TODO:
-add a new rule: When the original code operates on a multi-qubit array-var, rewrite it into a sequence of individual 1-qubit elements.
-
 the dependency analysis (both in rule #10 split-gen.teleports, and in the deps.graph) wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law: once a chunk has transferred a qubit state to another chunk (via teleportation), its state only lives in this last chunk, so the first chunk cannot export the same qubit again to any other chunk (without first receiving it back).
 the injected teleportations (by rule #10) do transfer the original state into a new qubit var 
 
