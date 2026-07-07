@@ -11,6 +11,9 @@ h q[1];
 h q[2];
 h q[3];
 h q[4];
+
+x q[5];
+h q[5];
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
@@ -109,9 +112,6 @@ telept_Xcorrect_q5_1 = measure q5_epr_1;
 if(telept_Zcorrect_q5_1) z q5_epr_TARGET_1;
 if(telept_Xcorrect_q5_1) x q5_epr_TARGET_1;
 // q[5] teleported into q5_epr_TARGET_1
-
-x q[5];
-h q[5];
 
 cx q[5], q[0];
 cx q[5], q[1];

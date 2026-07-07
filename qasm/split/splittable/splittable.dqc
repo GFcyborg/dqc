@@ -15,7 +15,6 @@ reset q[1];
 h q[0];
 cx q[0], q[1];
 barrier q[0], q[1];
-pragma dqc.v1.split id=1
 c_bell[0] = measure q[0];
 c_bell[1] = measure q[1];
 
@@ -25,7 +24,7 @@ c_bell[1] = measure q[1];
 reset q[2];
 
 h q[2];
-pragma dqc.v1.split id=2
+pragma dqc.v1.split id=1
 
 if (c_bell[1]) {
     x q[2];
@@ -39,6 +38,7 @@ if (c_bell[0]) {
 // CHUNK 3 — Independent step
 // ═════════════════════════════════════════════════════════════════════════
 reset q[3];
+pragma dqc.v1.split id=2
 
 h q[3];
 z q[3];

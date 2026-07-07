@@ -11,10 +11,10 @@ h q[1];
 h q[2];
 h q[3];
 h q[4];
-pragma dqc.v1.split id=1
 
 x q[5];
 h q[5];
+pragma dqc.v1.split id=1
 
 cx q[5], q[0];
 cx q[5], q[1];

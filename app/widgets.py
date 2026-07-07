@@ -385,14 +385,28 @@ class ZoomableView(QGraphicsView):
         self.grabGesture(Qt.GestureType.PinchGesture)
         self.viewport().grabGesture(Qt.GestureType.PinchGesture)
         self.setBackgroundBrush(QColor("#f8fbff"))
+        self._fit_margin_x_ratio = 0.03
+        self._fit_margin_y_ratio = 0.12
+        self._fit_margin_x_min = 8.0
+        self._fit_margin_y_min = 22.0
+
+    def set_fit_padding(self, *, x_ratio: float | None = None, y_ratio: float | None = None, x_min: float | None = None, y_min: float | None = None) -> None:
+        if x_ratio is not None:
+            self._fit_margin_x_ratio = max(0.0, float(x_ratio))
+        if y_ratio is not None:
+            self._fit_margin_y_ratio = max(0.0, float(y_ratio))
+        if x_min is not None:
+            self._fit_margin_x_min = max(0.0, float(x_min))
+        if y_min is not None:
+            self._fit_margin_y_min = max(0.0, float(y_min))
 
     def fit_scene(self) -> None:
         scene = self.scene()
         rect = scene.itemsBoundingRect() if scene is not None else self.sceneRect()
         if rect.isValid() and not rect.isNull():
             # Keep lateral padding tight to avoid early horizontal scrollbars in circuit/graph areas.
-            margin_x = max(8.0, rect.width() * 0.03)
-            margin_y = max(22.0, rect.height() * 0.12)
+            margin_x = max(self._fit_margin_x_min, rect.width() * self._fit_margin_x_ratio)
+            margin_y = max(self._fit_margin_y_min, rect.height() * self._fit_margin_y_ratio)
             fit_rect = rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
             if scene is not None:
                 scene.setSceneRect(fit_rect)
@@ -2123,6 +2137,9 @@ class CircuitView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.view = ZoomableView()
+        # Circuit should use almost no vertical auto-fit padding (top/bottom),
+        # while keeping a small horizontal gutter for readability.
+        self.view.set_fit_padding(x_ratio=0.02, y_ratio=0.0, x_min=6.0, y_min=1.0)
         self.view.setBackgroundBrush(QColor("#eceff3"))
         self._scene = QGraphicsScene(self)
         self._scene.setBackgroundBrush(QColor("#eceff3"))
