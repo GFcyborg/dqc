@@ -30,10 +30,8 @@ reset b;
 reset cout;
 /* Teleporting qubits into chunk 2:
  * a[0] from chunk 1
- * a[3] from chunk 1
  * b[0] from chunk 1
  * cin[0] from chunk 1
- * cout[0] from chunk 1
  */
 qubit a0_epr_1;
 qubit a0_epr_TARGET_1;
@@ -50,21 +48,6 @@ telept_Xcorrect_a0_1 = measure a0_epr_1;
 if(telept_Zcorrect_a0_1) z a0_epr_TARGET_1;
 if(telept_Xcorrect_a0_1) x a0_epr_TARGET_1;
 // a[0] teleported into a0_epr_TARGET_1
-qubit a3_epr_1;
-qubit a3_epr_TARGET_1;
-bit telept_Zcorrect_a3_1;
-bit telept_Xcorrect_a3_1;
-reset a3_epr_1;
-reset a3_epr_TARGET_1;
-h a3_epr_1;
-cx a3_epr_1, a3_epr_TARGET_1;
-cx a[3], a3_epr_1;
-h a[3];
-telept_Zcorrect_a3_1 = measure a[3];
-telept_Xcorrect_a3_1 = measure a3_epr_1;
-if(telept_Zcorrect_a3_1) z a3_epr_TARGET_1;
-if(telept_Xcorrect_a3_1) x a3_epr_TARGET_1;
-// a[3] teleported into a3_epr_TARGET_1
 qubit b0_epr_1;
 qubit b0_epr_TARGET_1;
 bit telept_Zcorrect_b0_1;
@@ -95,21 +78,6 @@ telept_Xcorrect_cin0_1 = measure cin0_epr_1;
 if(telept_Zcorrect_cin0_1) z cin0_epr_TARGET_1;
 if(telept_Xcorrect_cin0_1) x cin0_epr_TARGET_1;
 // cin[0] teleported into cin0_epr_TARGET_1
-qubit cout0_epr_1;
-qubit cout0_epr_TARGET_1;
-bit telept_Zcorrect_cout0_1;
-bit telept_Xcorrect_cout0_1;
-reset cout0_epr_1;
-reset cout0_epr_TARGET_1;
-h cout0_epr_1;
-cx cout0_epr_1, cout0_epr_TARGET_1;
-cx cout[0], cout0_epr_1;
-h cout[0];
-telept_Zcorrect_cout0_1 = measure cout[0];
-telept_Xcorrect_cout0_1 = measure cout0_epr_1;
-if(telept_Zcorrect_cout0_1) z cout0_epr_TARGET_1;
-if(telept_Xcorrect_cout0_1) x cout0_epr_TARGET_1;
-// cout[0] teleported into cout0_epr_TARGET_1
 
 // set input states
 for uint i in [0: 3] {
@@ -119,16 +87,15 @@ for uint i in [0: 3] {
 // add a to b, storing result in b
 majority cin[0], b[0], a[0];
 for uint i in [0: 2] { majority a[i], b[i + 1], a[i + 1]; }
-cx a[3], cout[0];
-for uint i in [2: -1: 0] { unmaj a[i],b[i+1],a[i+1]; }
 /* Teleporting qubits into chunk 3:
  * a[0] from chunk 2
+ * a[3] from chunk 1
  * b[0] from chunks 1, 2
  * b[1] from chunk 1
  * b[2] from chunk 1
  * b[3] from chunk 1
  * cin[0] from chunk 2
- * cout[0] from chunk 2
+ * cout[0] from chunk 1
  */
 qubit a0_epr_2;
 qubit a0_epr_TARGET_2;
@@ -145,6 +112,21 @@ telept_Xcorrect_a0_2 = measure a0_epr_2;
 if(telept_Zcorrect_a0_2) z a0_epr_TARGET_2;
 if(telept_Xcorrect_a0_2) x a0_epr_TARGET_2;
 // a[0] teleported into a0_epr_TARGET_2
+qubit a3_epr_2;
+qubit a3_epr_TARGET_2;
+bit telept_Zcorrect_a3_2;
+bit telept_Xcorrect_a3_2;
+reset a3_epr_2;
+reset a3_epr_TARGET_2;
+h a3_epr_2;
+cx a3_epr_2, a3_epr_TARGET_2;
+cx a[3], a3_epr_2;
+h a[3];
+telept_Zcorrect_a3_2 = measure a[3];
+telept_Xcorrect_a3_2 = measure a3_epr_2;
+if(telept_Zcorrect_a3_2) z a3_epr_TARGET_2;
+if(telept_Xcorrect_a3_2) x a3_epr_TARGET_2;
+// a[3] teleported into a3_epr_TARGET_2
 qubit b0_epr_2;
 qubit b0_epr_TARGET_2;
 bit telept_Zcorrect_b0_2;
@@ -235,6 +217,8 @@ telept_Xcorrect_cout0_2 = measure cout0_epr_2;
 if(telept_Zcorrect_cout0_2) z cout0_epr_TARGET_2;
 if(telept_Xcorrect_cout0_2) x cout0_epr_TARGET_2;
 // cout[0] teleported into cout0_epr_TARGET_2
+cx a[3], cout[0];
+for uint i in [2: -1: 0] { unmaj a[i],b[i+1],a[i+1]; }
 unmaj cin[0], b[0], a[0];
 measure b[0:3] -> ans[0:3];
 measure cout[0] -> ans[4];

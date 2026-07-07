@@ -207,6 +207,13 @@ class MainWindow(QMainWindow):
         self._runtime_state_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._runtime_state_timer.setInterval(120)
         self._runtime_state_timer.timeout.connect(self._refresh_runtime_run_state)
+        self._circuit_loading_timer = QTimer(self)
+        self._circuit_loading_timer.setInterval(120)
+        self._circuit_loading_timer.timeout.connect(self._tick_circuit_loading_indicator)
+        self._circuit_loading_frames = ["◐", "◓", "◑", "◒"]
+        self._circuit_loading_frame_index = 0
+        self._visual_refresh_token = 0
+        self._pending_visual_result = None
         self._runtime_run_token = 0
         self._runtime_run_start_monotonic: float | None = None
         self._runtime_executor: concurrent.futures.ProcessPoolExecutor | None = None
@@ -215,9 +222,13 @@ class MainWindow(QMainWindow):
         self._runtime_pending_result = None
         self._runtime_requested_backend = ""
         self._runtime_retry_attempted = False
+        self._runtime_refresh_requested = False
         self._runtime_stopwatch_label = QLabel("")
         self._runtime_stopwatch_label.setVisible(False)
         self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
+        self._circuit_loading_indicator = QLabel("")
+        self._circuit_loading_indicator.setVisible(False)
+        self._circuit_loading_indicator.setStyleSheet("font-weight: 700; color: #1d4ed8; padding-left: 8px; padding-right: 8px;")
         self._startup_graph_normalization_done = False
         self._thread_pool = QThreadPool(self)
         self._report_workers: list[ReportWorker] = []
@@ -372,6 +383,7 @@ class MainWindow(QMainWindow):
                 (self._runtime_timeout_label(), self.change_timeout),
                 (self._runtime_nodes_label(), self.change_distributed_nodes),
             ],
+            [self._circuit_loading_indicator],
             accent="#10b981",
             area_name="Runtime",
         )
@@ -917,6 +929,72 @@ already declared in the surrounding chunk code.</p>
     def _schedule_refresh(self) -> None:
         self._refresh_timer.start(250)
 
+    def _prepare_loading_view_state(self, target: Path) -> None:
+        target_name = target.name or str(target)
+        self._shutdown_runtime_executor()
+        self._start_circuit_loading_indicator()
+        self._refresh_timer.stop()
+        self._parameter_prompt_pending = False
+        self._parameter_prompt_open = False
+
+        self.original_editor.blockSignals(True)
+        self.original_editor.setPlainText("")
+        self.original_editor.blockSignals(False)
+        self.original_editor.update_line_number_area_width(self.original_editor.blockCount())
+        self.original_editor.line_number_area.update()
+        self.original_editor.setOriginalRuleMatches({})
+        self.original_editor.setRewriteSpans([])
+        self.original_editor.setPragmaLines(set())
+        self.original_editor.setSplitSuggestions(set())
+
+        self.rewritten_view.set_rewrite_result("", [])
+        self._set_rewritten_tab_fallback_warning([])
+        self.runtime_output.setPlainText(f"Loading {target_name}...\nPlease wait while code and graphs are prepared.")
+        # Keep preload feedback lightweight: spinner + runtime text + graph placeholders.
+        # Avoid rendering a large circuit placeholder here, which can delay/hide other widgets.
+        self.circuit_view.show_message("", color="#1d4ed8")
+
+        self.ast_tree_view.clear()
+        self.overall_dag_view.set_graph(None, lambda node: str(node), empty_message="Loading overall DAG...")
+        self.qubit_graph_view.set_graph(None, lambda node: str(node), empty_message="Loading qubit interaction...")
+        self.chunk_graph_view.set_graph(None, lambda node: str(node), empty_message="Loading chunk dependencies...")
+        self.suggestion_label.setText("Split suggestions: loading...")
+
+        self._show_status_feedback(f"Loading {target_name}...", timeout_ms=2500)
+        QApplication.processEvents()
+
+    def _start_circuit_loading_indicator(self) -> None:
+        self._circuit_loading_frame_index = 0
+        self._circuit_loading_indicator.setText("Loading circuit ◐")
+        self._circuit_loading_indicator.setVisible(True)
+        if not self._circuit_loading_timer.isActive():
+            self._circuit_loading_timer.start()
+
+    def _stop_circuit_loading_indicator(self) -> None:
+        self._circuit_loading_timer.stop()
+        self._circuit_loading_indicator.clear()
+        self._circuit_loading_indicator.setVisible(False)
+
+    def _tick_circuit_loading_indicator(self) -> None:
+        self._circuit_loading_frame_index = (self._circuit_loading_frame_index + 1) % len(self._circuit_loading_frames)
+        frame = self._circuit_loading_frames[self._circuit_loading_frame_index]
+        self._circuit_loading_indicator.setText(f"Loading circuit {frame}")
+
+    def _finalize_visual_refresh(self, token: int) -> None:
+        if token != self._visual_refresh_token:
+            return
+        result = self._pending_visual_result
+        self._pending_visual_result = None
+        if result is None:
+            self._stop_circuit_loading_indicator()
+            return
+        try:
+            self.circuit_view.show_circuit(result.circuit, result.split_qasm)
+            self.refresh_graphs()
+        finally:
+            self._stop_circuit_loading_indicator()
+            self._update_runtime_menu_labels()
+
     def _prompt_for_parameters(self, force: bool = False) -> None:
         if self._parameter_prompt_open:
             return
@@ -929,6 +1007,9 @@ already declared in the surrounding chunk code.</p>
             dialog = ParameterDialog(required, self)
             if dialog.exec() == QDialog.Accepted:
                 self.parameter_bindings = dialog.values()
+                # Parameter-driven refresh is a runtime start path too.
+                # Mark it so the stopwatch appears immediately.
+                self._runtime_refresh_requested = True
                 self.refresh()
         finally:
             self._parameter_prompt_open = False
@@ -963,6 +1044,7 @@ already declared in the surrounding chunk code.</p>
         if not path.exists():
             QMessageBox.warning(self, "Missing file", f"Cannot find {path}")
             return
+        self._prepare_loading_view_state(path)
         self.current_file = path
         self._update_window_title()
         self.current_source = read_text(path)
@@ -981,6 +1063,7 @@ already declared in the surrounding chunk code.</p>
         self._parameter_prompt_pending = False
         self._parameter_prompt_open = False
         self._suppress_parameter_prompt = not prompt_for_parameters
+        self._runtime_refresh_requested = True
         self.refresh()
         self._suppress_parameter_prompt = False
 
@@ -1295,7 +1378,17 @@ already declared in the surrounding chunk code.</p>
         suggestion_text = ", ".join(str(line) for line in sorted_suggestions) if sorted_suggestions else "none yet"
         self.suggestion_label.setText(f"Split suggestions: {suggestion_text}")
 
-    def refresh(self) -> None:
+    def refresh(self, *, start_runtime: bool = True) -> None:
+        self._runtime_refresh_requested = False
+        early_stopwatch = bool(start_runtime)
+        if early_stopwatch:
+            # Show stopwatch immediately for any runtime-capable refresh,
+            # even while rewrite/analysis is still preparing runtime input.
+            self._runtime_stopwatch_label.setVisible(True)
+            self._runtime_stopwatch_label.setText("Running simulation... 00:00:00.000")
+        self._visual_refresh_token += 1
+        visual_token = self._visual_refresh_token
+        runtime_started = False
         display_source = self.original_editor.toPlainText()
         self.current_source = display_source
         self.split_points = split_points_from_source(display_source)
@@ -1337,13 +1430,26 @@ already declared in the surrounding chunk code.</p>
                         f"{self._runtime_backend_fallback_line()}\n"
                         "Current AER backend: MPS"
                     )
-                    self._start_runtime_run(result, preferred_backend="MPS", retry_attempted=False)
-            self.circuit_view.show_circuit(result.circuit, result.split_qasm)
-            self.refresh_graphs()
-            self._update_runtime_menu_labels()
+                    if start_runtime:
+                        self._start_runtime_run(result, preferred_backend="MPS", retry_attempted=False)
+                        runtime_started = True
+                    else:
+                        self.runtime_output.setPlainText(
+                            "Runtime settings updated. Press Run now to execute with the new settings.\n"
+                            f"{self._runtime_backend_fallback_line()}"
+                        )
+            if result.circuit is not None:
+                self._start_circuit_loading_indicator()
+            self._pending_visual_result = result
+            QTimer.singleShot(0, lambda token=visual_token: self._finalize_visual_refresh(token))
         except Exception as exc:
+            self._stop_circuit_loading_indicator()
             self._shutdown_runtime_executor()
             self.runtime_output.setPlainText(f"Runtime failed: {exc}")
+            runtime_started = False
+        finally:
+            if early_stopwatch and not runtime_started and self._runtime_run_start_monotonic is None:
+                self._stop_runtime_stopwatch()
 
     def _set_rewritten_tab_fallback_warning(self, fallback_events: list[str]) -> None:
         tab_bar = self.code_tabs.tabBar()
@@ -1546,7 +1652,8 @@ already declared in the surrounding chunk code.</p>
         value, ok = QInputDialog.getInt(self, "Qiskit shots", "Shots:", self.shots, 1, 1_000_000, 1)
         if ok:
             self.shots = value
-            self.refresh()
+            self._update_runtime_menu_labels()
+            self.statusBar().showMessage(f"Qiskit shots set to {self.shots}. Press Run now to execute with the new value.", 3000)
 
     def change_timeout(self) -> None:
         dialog = QDialog(self)
@@ -1566,9 +1673,9 @@ already declared in the surrounding chunk code.</p>
             self.timeout_s = spin.value()
             self._update_runtime_menu_labels()
             if self.timeout_s == 0:
-                self.statusBar().showMessage("Runtime timeout disabled", 3000)
+                self.statusBar().showMessage("Runtime timeout disabled. Press Run now to use the new setting.", 3000)
             else:
-                self.statusBar().showMessage(f"Runtime timeout set to {self.timeout_s} seconds", 3000)
+                self.statusBar().showMessage(f"Runtime timeout set to {self.timeout_s} seconds. Press Run now to use the new setting.", 3000)
 
     def change_distributed_nodes(self) -> None:
         value, ok = QInputDialog.getInt(self, "Distrib.QPUs", "Number of distributed QPUs:", self.distributed_nodes, 1, 8, 1)
@@ -1577,13 +1684,14 @@ already declared in the surrounding chunk code.</p>
         self.distributed_nodes = value
         self._update_runtime_menu_labels()
         self.statusBar().showMessage(f"Distrib.QPUs set to {self.distributed_nodes}", 3000)
-        self.refresh()
+        self.refresh(start_runtime=False)
 
     def run_manual(self) -> None:
         analysis_source = self._split_save_source()
         if scan_inputs(analysis_source):
             self._prompt_for_parameters(force=True)
             return
+        self._runtime_refresh_requested = True
         self.refresh()
 
     def _start_runtime_stopwatch(self) -> None:
@@ -1598,6 +1706,8 @@ already declared in the surrounding chunk code.</p>
     def _update_runtime_stopwatch(self) -> None:
         if self._runtime_run_start_monotonic is None:
             return
+        if not self._runtime_stopwatch_label.isVisible():
+            self._runtime_stopwatch_label.setVisible(True)
         elapsed = time.perf_counter() - self._runtime_run_start_monotonic
         total_ms = max(0, int(round(elapsed * 1000.0)))
         hours, rem = divmod(total_ms, 3_600_000)
@@ -1701,6 +1811,8 @@ already declared in the surrounding chunk code.</p>
     def _refresh_runtime_run_state(self) -> None:
         if self._runtime_run_start_monotonic is None:
             return
+        if not self._runtime_stopwatch_label.isVisible():
+            self._runtime_stopwatch_label.setVisible(True)
         self._update_runtime_stopwatch()
         future = self._runtime_future
         if future is None:

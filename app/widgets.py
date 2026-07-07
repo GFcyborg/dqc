@@ -2129,18 +2129,22 @@ class CircuitView(QWidget):
         self.view.setScene(self._scene)
         layout.addWidget(self.view)
 
-    def show_circuit(self, circuit: Any | None, runtime_source: str | None = None) -> None:
+    def show_message(self, message: str, color: str = "#334155") -> None:
         self._scene.clear()
+        text = _add_selectable_scene_text(
+            self._scene,
+            message,
+            QColor(color),
+            QFont("DejaVu Sans Mono", 12),
+        )
+        self._scene.setSceneRect(text.boundingRect().adjusted(-40, -30, 40, 30))
+        self.view.fit_scene()
+
+    def show_circuit(self, circuit: Any | None, runtime_source: str | None = None) -> None:
         if circuit is None:
-            text = _add_selectable_scene_text(
-                self._scene,
-                "No circuit available",
-                QColor("#334155"),
-                QFont("DejaVu Sans Mono", 12),
-            )
-            self._scene.setSceneRect(text.boundingRect().adjusted(-40, -30, 40, 30))
-            self.view.fit_scene()
+            self.show_message("No circuit available")
             return
+        self._scene.clear()
         figure = None
         try:
             from qiskit.visualization import circuit_drawer

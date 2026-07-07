@@ -21,6 +21,7 @@ h q[2];
 h anc;
 
 barrier q[0], q[1], q[2], anc;
+pragma dqc.v1.split id=2
 
 // ── Oracolo bilanciato  Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂ ───────────────────────
 // Phase kickback: |x⟩|−⟩ → (−1)^{f(x)} |x⟩|−⟩
@@ -29,7 +30,6 @@ cx q[1], anc;
 cx q[2], anc;
 
 barrier q[0], q[1], q[2], anc;
-pragma dqc.v1.split id=2
 
 // ── Hadamard inverso sui qubit di input ───────────────────────────────────
 h q[0];
@@ -37,7 +37,6 @@ h q[1];
 h q[2];
 
 barrier q[0], q[1], q[2], anc;
-pragma dqc.v1.split id=3
 
 // ── Misura (solo i qubit di input; anc non misurata) ─────────────────────
 c = measure q;

@@ -1047,13 +1047,40 @@ still too little: are you sure that you are increasing the right font? I don't s
 increase the font size some more.
 2026.07.07-08.58
 ---------------------------------------------
-
-
+when loading new code from files, the GUI sometimes takes several seconds before showing the new code+graphs: during this wait, the user may be confused because he still sees the old code+graphs and he gets no visual feedback of the loading process (taking time). So, on load of new files, the GUI needs a quick blanking (of previous window content) and some visual feedback of the loading process taking some time.
+2026.07.07-09.19
+---------------------------------------------
+The new pre-load visual feedback is too aggressive, in that it blocks all UI updates until everything is ready to show: this introduces unneeded delay, by delaying the UI parts that are ready to show. The quick blanking is OK, but after that, every UI-view/widget should be showed as soon as it's ready: usually everything is quite quick in the GUI, except for the circuit and the Runtime output, taking a long time to compute: that's why there was a running stopwatch showing in the bottom-right corner, but this stopwatch has been completely hidden by the new pre-loading feedback ! Make sure it's visible again.
+Also: add a tiny animated indicator (a spinning dot in the Runtime view) while loading the circuit.
+2026.07.07-09.37
+---------------------------------------------
+the stopwatch is still not showing as soon as a run session has been launched: make sure it starts at any runtime start (this happens both on load of files, and on Run-now button/menutiem action).
+2026.07.07-09.47
+---------------------------------------------
+stopwatch is not showing with *.dqc files (but it works with *.qasm).
+2026.07.07-09.53
+---------------------------------------------
+not all Runtime button/menuitem actions should trigger a new run: e.g. shots, timeout and QPU# settings should not start a new run session. Only "Run now" button/menuitem should.
+2026.07.07-09.59
+---------------------------------------------
+stopwatch is still not showing with *.dqc files (but it works with *.qasm).
+2026.07.07-10.04
+---------------------------------------------
+stopwatch is still not showing with *.dqc files (but it works with *.qasm).
+2026.07.07-10.08
+---------------------------------------------
+stopwatch is still not showing with *.dqc files (but it works with *.qasm).
+I suspect the pre-load message ("Loading circuit preview...") is preventing the widgets from showing (including the stopwatch).
+2026.07.07-10.17
+---------------------------------------------
+changing the shots settings freezes the GUI and it takes way too long to be updated in the GUI button/menuitem: in theory this should not be an eavy task (since it should not trigger any re-computation of the Runtime/Circuit). What is it doing? fix it.
+2026.07.07-10.26
+---------------------------------------------
 
 
 ================ TODO:
-the dependency analysis (both in rule #10 split-gen.teleports, and in the deps.graph) wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law: once a chunk has transferred a qubit state to another chunk (via teleportation), its state only lives in this last chunk, so the first chunk cannot export the same qubit again to any other chunk (without first receiving it back).
-the injected teleportations (by rule #10) do transfer the original state into a new qubit var 
+the dependency analysis (both in rule #11 split-gen.teleports, and in the deps.graph) wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law: once a chunk has transferred a qubit state to another chunk (via teleportation), its state only lives in this last chunk, so the first chunk cannot export the same qubit again to any other chunk (without first receiving it back).
+the injected teleportations (by rule #11) do transfer the original state into a new qubit var ...
 
 The dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
 This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.

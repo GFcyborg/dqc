@@ -86,14 +86,6 @@ h q[2];
 h anc;
 
 barrier q[0], q[1], q[2], anc;
-
-// ── Oracolo bilanciato  Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂ ───────────────────────
-// Phase kickback: |x⟩|−⟩ → (−1)^{f(x)} |x⟩|−⟩
-cx q[0], anc;
-cx q[1], anc;
-cx q[2], anc;
-
-barrier q[0], q[1], q[2], anc;
 /* Teleporting qubits into chunk 3:
  * anc from chunk 2
  * q[0] from chunks 1, 2
@@ -161,62 +153,20 @@ if(telept_Zcorrect_q2_2) z q2_epr_TARGET_2;
 if(telept_Xcorrect_q2_2) x q2_epr_TARGET_2;
 // q[2] teleported into q2_epr_TARGET_2
 
+// ── Oracolo bilanciato  Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂ ───────────────────────
+// Phase kickback: |x⟩|−⟩ → (−1)^{f(x)} |x⟩|−⟩
+cx q[0], anc;
+cx q[1], anc;
+cx q[2], anc;
+
+barrier q[0], q[1], q[2], anc;
+
 // ── Hadamard inverso sui qubit di input ───────────────────────────────────
 h q[0];
 h q[1];
 h q[2];
 
 barrier q[0], q[1], q[2], anc;
-/* Teleporting qubits into chunk 4:
- * q[0] from chunk 1
- * q[1] from chunk 1
- * q[2] from chunk 1
- */
-qubit q0_epr_3;
-qubit q0_epr_TARGET_3;
-bit telept_Zcorrect_q0_3;
-bit telept_Xcorrect_q0_3;
-reset q0_epr_3;
-reset q0_epr_TARGET_3;
-h q0_epr_3;
-cx q0_epr_3, q0_epr_TARGET_3;
-cx q[0], q0_epr_3;
-h q[0];
-telept_Zcorrect_q0_3 = measure q[0];
-telept_Xcorrect_q0_3 = measure q0_epr_3;
-if(telept_Zcorrect_q0_3) z q0_epr_TARGET_3;
-if(telept_Xcorrect_q0_3) x q0_epr_TARGET_3;
-// q[0] teleported into q0_epr_TARGET_3
-qubit q1_epr_3;
-qubit q1_epr_TARGET_3;
-bit telept_Zcorrect_q1_3;
-bit telept_Xcorrect_q1_3;
-reset q1_epr_3;
-reset q1_epr_TARGET_3;
-h q1_epr_3;
-cx q1_epr_3, q1_epr_TARGET_3;
-cx q[1], q1_epr_3;
-h q[1];
-telept_Zcorrect_q1_3 = measure q[1];
-telept_Xcorrect_q1_3 = measure q1_epr_3;
-if(telept_Zcorrect_q1_3) z q1_epr_TARGET_3;
-if(telept_Xcorrect_q1_3) x q1_epr_TARGET_3;
-// q[1] teleported into q1_epr_TARGET_3
-qubit q2_epr_3;
-qubit q2_epr_TARGET_3;
-bit telept_Zcorrect_q2_3;
-bit telept_Xcorrect_q2_3;
-reset q2_epr_3;
-reset q2_epr_TARGET_3;
-h q2_epr_3;
-cx q2_epr_3, q2_epr_TARGET_3;
-cx q[2], q2_epr_3;
-h q[2];
-telept_Zcorrect_q2_3 = measure q[2];
-telept_Xcorrect_q2_3 = measure q2_epr_3;
-if(telept_Zcorrect_q2_3) z q2_epr_TARGET_3;
-if(telept_Xcorrect_q2_3) x q2_epr_TARGET_3;
-// q[2] teleported into q2_epr_TARGET_3
 
 // ── Misura (solo i qubit di input; anc non misurata) ─────────────────────
 c = measure q;
