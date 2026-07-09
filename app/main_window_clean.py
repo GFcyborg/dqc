@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 from .pipeline import (
     DEFAULT_RULES,
+    UNCONDITIONAL_RULES,
     QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS,
     RuleState,
     build_ast_graph,
@@ -190,9 +191,11 @@ class MainWindow(QMainWindow):
         self._parameter_prompt_pending = False
         self._parameter_prompt_open = False
         # Initialize rules: bypass (rule 0) disabled by default, all others enabled
+        # Combine conditional rules with unconditional rules
+        all_rules = DEFAULT_RULES + UNCONDITIONAL_RULES
         self.rules = [
             RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0)
-            for rule in DEFAULT_RULES
+            for rule in all_rules
         ]
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -1111,6 +1114,9 @@ already declared in the surrounding chunk code.</p>
         return "\n".join(result_lines)
 
     def on_rule_toggled(self, rule_id: int, checked: bool) -> None:
+        # Ignore unconditional rules (rule 98, 99 - always applied)
+        if rule_id >= 98:
+            return
         for rule in self.rules:
             if rule.rule_id == rule_id:
                 rule.enabled = checked

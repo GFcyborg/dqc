@@ -1011,12 +1011,20 @@ class RulePanel(QFrame):
     def __init__(self, rules: list[Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: dict[int, QCheckBox] = {}
+        self._unconditional_rules: set[int] = set()
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet("QFrame { background: rgba(255,255,255,0.88); border: 1px solid rgba(96, 165, 250, 0.18); border-radius: 10px; }")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        for rule in rules:
+        
+        # Separate conditional and unconditional rules
+        conditional_rules = [r for r in rules if r.rule_id < 98]
+        unconditional_rules = [r for r in rules if r.rule_id >= 98]
+        self._unconditional_rules = {r.rule_id for r in unconditional_rules}
+        
+        # Add conditional rules
+        for rule in conditional_rules:
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1035,21 +1043,61 @@ class RulePanel(QFrame):
             desc.setStyleSheet("color: #475569; font-size: 11px;")
             layout.addWidget(desc)
             self._rows[rule.rule_id] = check
+        
+        # Add separator for unconditional rules
+        if unconditional_rules:
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setStyleSheet("color: #cbd5e1;")
+            layout.addWidget(separator)
+            
+            unconditional_label = QLabel("UNCONDITIONAL (Always Applied):")
+            unconditional_label.setStyleSheet("color: #0f172a; font-size: 11px; margin-top: 4px;")
+            layout.addWidget(unconditional_label)
+            
+            # Add unconditional rules as disabled checkboxes
+            for rule in unconditional_rules:
+                row = QWidget()
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(8)
+                check = QCheckBox(f"{rule.rule_id}. {rule.name}")
+                check.setChecked(True)  # Always checked
+                check.setEnabled(False)  # Always disabled
+                check.setStyleSheet("color: #94a3b8;")
+                row_layout.addWidget(check)
+                layout.addWidget(row)
+                desc = QLabel(rule.description)
+                desc.setWordWrap(True)
+                desc.setStyleSheet("color: #475569; font-size: 11px;")
+                layout.addWidget(desc)
+                self._rows[rule.rule_id] = check
+        
         layout.addStretch(1)
 
     def set_states(self, enabled_rules: set[int], bypass: bool) -> None:
         for rule_id, check in self._rows.items():
-            check.blockSignals(True)
-            check.setChecked(rule_id in enabled_rules)
-            check.blockSignals(False)
-            if bypass and rule_id != 0:
+            if rule_id in self._unconditional_rules:
+                # Unconditional rules are always checked and disabled
+                check.blockSignals(True)
+                check.setChecked(True)
                 check.setEnabled(False)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
-                check.setStyleSheet(f"color: #94a3b8;{extra}")
+                check.setStyleSheet("color: #94a3b8;")
+                check.blockSignals(False)
             else:
-                check.setEnabled(True)
-                extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
-                check.setStyleSheet(f"color: #0f172a;{extra}")
+                # Conditional rules follow normal state changes
+                check.blockSignals(True)
+                check.setChecked(rule_id in enabled_rules)
+                check.blockSignals(False)
+                if bypass and rule_id != 0:
+                    check.setEnabled(False)
+                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
+                    check.setStyleSheet(f"color: #94a3b8;{extra}")
+                else:
+                    check.setEnabled(True)
+                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
+                    check.setStyleSheet(f"color: #0f172a;{extra}")
+
 
 
 class ParseTreeView(QTreeWidget):

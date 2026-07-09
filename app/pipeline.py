@@ -191,7 +191,7 @@ class ChunkFlow:
 
 
 DEFAULT_RULES = [
-    RuleState(0, "Bypass all rewrites", "Temporarily ignore all the other rules without losing their toggle states."),
+    RuleState(0, "Bypass all CONDITIONAL rewrites", "Temporarily ignore all the conditional rules without losing their toggle states."),
     RuleState(1, "Drop comments", "Remove single-line comments from the transpiled output."),
     RuleState(2, "Drop blank lines", "Compact the transpiled output by removing empty lines."),
     RuleState(3, "Inject OPENQASM 3.1", "Insert a version header when the source does not declare one."),
@@ -205,12 +205,18 @@ DEFAULT_RULES = [
     RuleState(11, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
 
+UNCONDITIONAL_RULES = [
+    RuleState(98, "Restore ++ alias concatenation", "Normalize ++ concatenations in let/const to index-set syntax for qiskit-qasm3-import (always applied first).", enabled=True),
+    RuleState(99, "No pragmas into qiskit", "Unconditional rule: comment out all pragmas before qiskit-qasm3-import (always applied last).", enabled=True),
+]
+
 
 def ordered_active_rule_ids(rules: list[RuleState]) -> list[int]:
     rule_map = {rule.rule_id: rule.enabled for rule in rules}
     if rule_map.get(0, False):
         return []
-    return sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id != 0)
+    # Exclude unconditional rules (98, 99) from the ordered list; they're applied separately
+    return sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id not in (0, 98, 99))
 
 INNER_SCOPE_BLOCKING_KINDS = {
     "QuantumGateDefinition",
@@ -551,36 +557,9 @@ def normalize_scalar_register_declarations(source: str) -> str:
     return "\n".join(normalized_lines)
 
 
-def strip_pragmas_for_qiskit(source: str) -> tuple[str, int]:
-    kept_lines: list[str] = []
-    removed = 0
-    for line in source.splitlines():
-        if line.strip().startswith("pragma "):
-            removed += 1
-            continue
-        kept_lines.append(line)
-    return "\n".join(kept_lines), removed
-
-
-def _strip_pragmas_via_openqasm_ast(source: str) -> tuple[str, int]:
-    try:
-        import openqasm3  # type: ignore
-
-        program = _parse_quietly(openqasm3.parse, source)
-        statements = list(getattr(program, "statements", []) or [])
-        kept: list[Any] = []
-        removed = 0
-        for stmt in statements:
-            if type(stmt).__name__ == "Pragma":
-                removed += 1
-            else:
-                kept.append(stmt)
-        if removed <= 0:
-            return source, 0
-        program.statements = kept
-        return openqasm3.dumps(program), removed
-    except Exception:
-        return source, 0
+# Pragma stripping is now handled unconditionally by rule #99 (rewrite_comment_out_pragmas)
+# before any source reaches parse_qiskit_with_pragma_resilience.
+# These functions are no longer needed.
 
 
 def _concat_expr_to_index_set(expr: str) -> str | None:
@@ -634,40 +613,27 @@ def restore_concat_aliases_for_qiskit(source: str) -> str:
 
 
 def parse_qiskit_with_pragma_resilience(qiskit_parse: Any, source: str) -> tuple[Any, int, list[str]]:
+    """Parse source with qiskit, with fallback for ++ alias normalization.
+    
+    Rule #99 (unconditional pragma commenting) is applied before this function is called,
+    so all pragmas are already visible-as-comments in the source.
+    This function handles the ++ alias restoration fallback for cases where qiskit
+    cannot parse concatenation syntax in let/const declarations.
+    """
     normalized_source = normalize_scalar_register_declarations(source)
 
-    line_stripped_source, removed_line_pragmas = strip_pragmas_for_qiskit(normalized_source)
     try:
-        fallback_events: list[str] = []
-        if removed_line_pragmas > 0:
-            fallback_events.append("Pragma stripping (line-based)")
-        return _parse_quietly(qiskit_parse, line_stripped_source), removed_line_pragmas, fallback_events
+        return _parse_quietly(qiskit_parse, normalized_source), 0, []
     except Exception as first_exc:
+        # Fallback: Try normalizing ++ concatenations to index-set syntax
         if "++" in normalized_source:
             restored_source = restore_concat_aliases_for_qiskit(normalized_source)
             if restored_source != normalized_source:
-                restored_line_stripped, restored_removed_pragmas = strip_pragmas_for_qiskit(restored_source)
                 try:
-                    fallback_events = ["++ alias normalization for qiskit parser"]
-                    if restored_removed_pragmas > 0:
-                        fallback_events.append("Pragma stripping (line-based)")
-                    return _parse_quietly(qiskit_parse, restored_line_stripped), max(removed_line_pragmas, restored_removed_pragmas), fallback_events
+                    return _parse_quietly(qiskit_parse, restored_source), 0, ["++ alias normalization for qiskit parser"]
                 except Exception:
                     pass
-
-        # If the source contains pragma expressions in forms that line-based stripping
-        # misses, retry by removing pragma AST nodes with openqasm3.
-        if "pragma" not in normalized_source.lower():
-            raise
-
-        ast_stripped_source, removed_ast_pragmas = _strip_pragmas_via_openqasm_ast(normalized_source)
-        if removed_ast_pragmas <= 0:
-            raise first_exc
-        try:
-            circuit = _parse_quietly(qiskit_parse, ast_stripped_source)
-            return circuit, max(removed_line_pragmas, removed_ast_pragmas), ["Pragma stripping (AST-based)"]
-        except Exception:
-            raise first_exc
+        raise first_exc
 
 def rewrite_bit_to_bool_cast(lines: list[str], enabled: bool, spans: list[RewriteSpan], source: str) -> list[str]:
     if not enabled:
@@ -1168,6 +1134,79 @@ def rewrite_unfold_broadcast_operations(lines: list[str], enabled: bool, spans: 
 
         rewritten_lines.append(line)
 
+    return rewritten_lines
+
+
+def rewrite_restore_alias_concatenation(lines: list[str], spans: list[RewriteSpan]) -> list[str]:
+    """Rule #98 (unconditional): Restore ++ alias concatenations to index-set syntax.
+    
+    Converts `let a = q[0] ++ q[1]` to `let a = q[{0, 1}]` for qiskit-qasm3-import compatibility.
+    This is always applied as an unconditional safeguard before pragma handling (rule #99).
+    """
+    rewritten_lines: list[str] = []
+    
+    for line_no, line in enumerate(lines, start=1):
+        # Match let/const declarations with potentially concatenated expressions
+        match = re.match(
+            r"^(?P<indent>\s*)(?P<head>(?:let|const\s+\w+(?:\[[^\]]+\])?)\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*)(?P<expr>[^;]+)(?P<tail>;.*)$",
+            line,
+        )
+        if not match:
+            rewritten_lines.append(line)
+            continue
+
+        expr = match.group("expr").strip()
+        if "++" not in expr:
+            rewritten_lines.append(line)
+            continue
+
+        # Try to restore the ++ concatenation to index-set syntax
+        restored_expr = _concat_expr_to_index_set(expr)
+        if restored_expr is None or restored_expr == expr:
+            rewritten_lines.append(line)
+            continue
+
+        rewritten_line = f"{match.group('indent')}{match.group('head')}{restored_expr}{match.group('tail')}"
+        rewritten_lines.append(rewritten_line)
+        spans.append(
+            RewriteSpan(
+                line_no,
+                line,
+                restored_expr,
+                98,
+                "Normalized ++ concatenation to index-set syntax for qiskit-qasm3-import (unconditional).",
+            )
+        )
+    
+    return rewritten_lines
+
+
+def rewrite_comment_out_pragmas(lines: list[str], spans: list[RewriteSpan]) -> list[str]:
+    """Rule #99 (unconditional): Comment out all pragma lines to prevent qiskit parser errors.
+    
+    This is always applied, regardless of rule toggles, as a final safeguard.
+    Pragmas are commented with // marking the entire rewrite as green.
+    """
+    rewritten_lines: list[str] = []
+    
+    for line_no, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("pragma "):
+            # Comment out the pragma
+            commented = f"// {line.rstrip()}"
+            rewritten_lines.append(commented)
+            spans.append(
+                RewriteSpan(
+                    line_no,
+                    line,
+                    commented,
+                    99,
+                    "Pragmas not allowed by qiskit-qasm3-import (commented out unconditionally).",
+                )
+            )
+        else:
+            rewritten_lines.append(line)
+    
     return rewritten_lines
 
 
@@ -2339,6 +2378,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
                 rewritten = rewrite_resolve_chained_indexing(rewritten, True, spans)
             elif rule_id == 10:
                 rewritten = rewrite_unfold_broadcast_operations(rewritten, True, spans)
+    
     rewritten_source = "\n".join(rewritten)
     rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
     dqc_source = add_split_markers(rewritten_no_pragmas, split_lines)
@@ -2347,12 +2387,27 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source, fallback_events=fallback_events_set)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
     apply_rule_teleports = 11 in active_rule_ids
+    
+    # Determine canonical rewritten source (same for display, parsing, runtime, graphs)
     if split_lines:
-        display_rewritten_source = dqc_qasm if apply_rule_teleports else dqc_source
+        canonical_rewritten = dqc_qasm if apply_rule_teleports else dqc_source
     else:
-        display_rewritten_source = rewritten_source
-    qubit_register_names = extract_qubit_register_names(rewritten_source)
-    qubit_register_sizes = extract_qubit_register_sizes(rewritten_source)
+        canonical_rewritten = rewritten_source
+    
+    # Apply unconditional rules in sequence:
+    # Rule #98 (first): Restore ++ alias concatenations to index-set syntax
+    # Rule #99 (last): Comment out all pragmas
+    # This ensures ALL downstream consumers (display, parsing, runtime, graphs) see the same code.
+    canonical_lines = normalize_lines(canonical_rewritten)
+    canonical_lines = rewrite_restore_alias_concatenation(canonical_lines, spans)
+    canonical_lines = rewrite_comment_out_pragmas(canonical_lines, spans)
+    final_rewritten_source = "\n".join(canonical_lines)
+    
+    # Now all consumers use final_rewritten_source
+    display_rewritten_source = final_rewritten_source
+    
+    qubit_register_names = extract_qubit_register_names(final_rewritten_source)
+    qubit_register_sizes = extract_qubit_register_sizes(final_rewritten_source)
     chunk_graph = build_chunk_dependency_graph(
         chunk_flows,
         qubit_register_names=qubit_register_names,
@@ -2360,47 +2415,34 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     )
     parse_tree = None
     issues: list[RewriteSpan] = []
-    parse_candidates = [display_rewritten_source]
-    if apply_rule_teleports and dqc_source not in parse_candidates:
-        parse_candidates.append(dqc_source)
-    if rewritten_source not in parse_candidates:
-        parse_candidates.append(rewritten_source)
-    last_parse_exc: Exception | None = None
-    for candidate in parse_candidates:
-        try:
-            # Prefer the Rewritten tab source, but gracefully fall back if it is not parseable.
-            parse_tree = _parse_quietly(parse, candidate)
-            break
-        except Exception as exc:
-            last_parse_exc = exc
-    if parse_tree is None and last_parse_exc is not None:
-        issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {last_parse_exc}", kind="error"))
-    dag_graph, interaction_graph, _ = qasm_token_graph(rewritten_source)
-    suggested_split_points, suggestion_reason = suggest_split_points(rewritten_source, distributed_nodes=distributed_nodes)
+    
+    # Try to parse with openqasm3. The final_rewritten_source already has all pragmas commented.
+    try:
+        parse_tree = _parse_quietly(parse, final_rewritten_source)
+    except Exception as exc:
+        issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {exc}", kind="error"))
+    
+    # Use final_rewritten_source for all graph computations (DAG, interaction graph, suggestions)
+    dag_graph, interaction_graph, _ = qasm_token_graph(final_rewritten_source)
+    suggested_split_points, suggestion_reason = suggest_split_points(final_rewritten_source, distributed_nodes=distributed_nodes)
+    
     circuit_result = None
     counts: dict[str, int] = {}
     duration_s = 0.0
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
 
-        runtime_candidates = [display_rewritten_source]
-        if apply_rule_teleports and dqc_source not in runtime_candidates:
-            runtime_candidates.append(dqc_source)
-        if rewritten_source not in runtime_candidates:
-            runtime_candidates.append(rewritten_source)
-
+        # Use canonical source for runtime. The ++ alias restoration fallback
+        # (inside parse_qiskit_with_pragma_resilience) will handle parse edge cases.
         removed_pragmas = 0
         runtime_error: Exception | None = None
-        for runtime_source in runtime_candidates:
-            try:
-                circuit_result, removed_pragmas, parse_fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
-                fallback_events_set.update(parse_fallback_events)
-                runtime_error = None
-                break
-            except Exception as exc:
-                runtime_error = exc
-                circuit_result = None
-
+        try:
+            circuit_result, removed_pragmas, parse_fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, final_rewritten_source)
+            fallback_events_set.update(parse_fallback_events)
+            runtime_error = None
+        except Exception as exc:
+            runtime_error = exc
+            circuit_result = None
         if circuit_result is None and runtime_error is not None:
             raise runtime_error
 
@@ -2415,7 +2457,15 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
             duration_s = time.perf_counter() - start
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"Runtime execution failed: {exc}", kind="error"))
-    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=dqc_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set))
+    
+    # Apply unconditional rules (#98, #99) to split_qasm as well (used by runtime when split files are present)
+    # Always apply in sequence to ensure consistency with final_rewritten_source
+    split_qasm_lines = normalize_lines(dqc_qasm)
+    split_qasm_lines = rewrite_restore_alias_concatenation(split_qasm_lines, spans)
+    split_qasm_lines = rewrite_comment_out_pragmas(split_qasm_lines, spans)
+    final_split_qasm = "\n".join(split_qasm_lines)
+    
+    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=final_split_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set))
 
 
 def build_ast_graph(parse_tree: Any) -> nx.DiGraph:

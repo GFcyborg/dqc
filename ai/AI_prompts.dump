@@ -1083,10 +1083,47 @@ the vertical margins (over and under) of the circuit drawing are too large: try 
 This is just a chat marker for me, and to inform you that I reverted to last git commit because the code became unstable after that. You don't need to do anything now, just ack it.
 2026.07.09-19.36
 ---------------------------------------------
+At the bottom of the list of the toggable rewriting rules I want to add an UNCONDITIONAL section with a new rule #99, that the user cannot disable (neither directly, nor by using rule #0, to be renamed with "Bypass all CONDITIONAL rewrites"), hence no checkbox there. The new rule #99, called "No pragma allowed into qiskit-qasm3-import", will be processed as last (even after rule #11 (split-gen.teleports)) by the pipeline, and it should catch ALL pragmas left behind, by commenting them out (also marking "//" in green, as usual). This way we can also remove the hidden fallback and the specialized handling of un-expanded split pragmas (while keeping rule #11 as it is), hence unifying the generic-pragma logic (enforcing the unconditional rule: no pragma should ever reach the Rewritten code, nor the qiskit-qasm3-import input). This will also allow to unify the Rewritten code and the qiskit circuit: they should be as close as possible (ideally identical: are there cases where this is still not possible?).
+2026.07.09-21.48
+---------------------------------------------
+in the Compatibility rules view, keep the formatting of rule #99 coherent with the format of the normal rules, the only visual difference should be that its checkbox is active and grayed out (fixed).
+The "Unconditional ..." section header should not be in bold: just normal.
+2026.07.09-22.05
+---------------------------------------------
+Why is the last line of the Compatibility rules, ("Unconditional rule: ...") colored in violet ? I said: no special formatting! just normal.
+2026.07.09-22.09
+---------------------------------------------
+Ok, now that we have a safety net preventing all pragmas from reaching qiskit, I want to know if there are leftovers from the old pragma-related fallbacks (in particular those hidden paths preventing Rewritten code from being identical to what is fed to qiskit-qasm3-import & AER). Are they gone? Can we simplify the path?
+2026.07.09-22.14
+---------------------------------------------
+Can We Simplify? YES: We can remove the pragma stripping fallback paths entirely because:
+    All pragmas are already visible-as-commented in display_rewritten_source
+    The hidden stripping paths never fire
+    The red-tab warning never appears
+However, we should keep the ++ alias restoration fallback (lines 655-659) since that's independent of pragma handling and may still be needed for some parse candidates.
+Would you like me to clean this up by removing the pragma-specific fallback paths?
 
-
-
-
+Yes, do it. Also: tell me more about the need of ++ alias restoration fallback.
+2026.07.09-22.21
+---------------------------------------------
+If I manually add a "pragma x" line in a *.qasm file Original code, it gets correctly caught and commented out in the Rewritten code, but the Runtime output complains with error:
+"Runtime failed: 5,0: node of type Pragma is not supported"
+This raises the question: are the Rewritten code, the circuit, and the Runtime, running the same code? Is there any difference not visible in the Rewritten code view ?
+2026.07.09-22.31
+---------------------------------------------
+The runtime is still complaining with: "Runtime failed: 5,0: node of type Pragma is not supported"
+So it still gets uncaught pragmas.
+More in general: I wonder why we need so many variations of the Rewritten code. The basic idea was to do all needed mangling/rewriting before the QASM code gets to the Rewritten code view, not after (otherwise the user won't have visibility over the final code actually represented/run). What's preventing the app from sharing the same code in all the following modules?
+Rewritten, circuit drawing, runtime execution, AST, and all the graphs.
+2026.07.09-22.48
+---------------------------------------------
+still showing the error: "Runtime failed: 5,0: node of type Pragma is not supported"
+The runtime is still not using the same code as the other views!
+2026.07.09-22.53
+---------------------------------------------
+I want the Rewrite code to show the real/ultimate/final code run by the AER (and all other views/graphs): there must be no change whatsoever to the code shown in Rewritten code view. For this reason, I want to bring to visibility the last hidden fallback (++ alias restoration): can it be represented by another unconditional rule (I suggest #98) ?
+2026.07.09-23.06
+---------------------------------------------
 
 
 
