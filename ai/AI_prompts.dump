@@ -1079,12 +1079,189 @@ changing the shots settings freezes the GUI and it takes way too long to be upda
 the vertical margins (over and under) of the circuit drawing are too large: try to minimize them (to almost 0).
 2026.07.07-13.05
 ---------------------------------------------
-add an alias to each teleported target:
+############ git reset --hard HEAD +++ RESTORED CHAT CHECKPOINT ############
+This is just a chat marker for me, and to inform you that I reverted to last git commit because the code became unstable after that. You don't need to do anything now, just ack it.
+2026.07.09-19.36
+---------------------------------------------
 
 
+
+
+
+
+
+================ TO REPLAY?
+rule #11 (split-gen.teleports) update: at the end of each block of teleportations, before continuing with the code of the next chunk, inject the shortened aliases of all teleported qubits, e.g.:
+
+[chunk#1 code]
+/* Teleporting qubits into chunk 2:
+ * q[0] from chunk 1
+ * q[1] from chunk 1
+ */
+...
+// q[0] teleported into q0_epr_TARGET_1
+...
+// q[1] teleported into q1_epr_TARGET_1
+let q0-to2 = q0_epr_TARGET_1 ;
+let q1-to2 = q1_epr_TARGET_1 ;
+// ---------------------------
+[chunk#2 code]
+/* Teleporting qubits into chunk 3:
+ * q[0] from chunk 2
+ * q[1] from chunk 2
+ */
+...
+// q[0] teleported into q0_epr_TARGET_2
+...
+// q[1] teleported into q1_epr_TARGET_2
+let q0-to3 = q0_epr_TARGET_2 ;
+let q1-to3 = q1_epr_TARGET_2 ;
+// ---------------------------
+[chunk#3 code]
+
+2026.07.07-13.48
+---------------------------------------------
+fix the shortened aliases formatting to EXACTLY match my request (including the final comment line, and the dashes instead of underscores), e.g.:
+let q0-to3 = q0_epr_TARGET_2 ;
+let q1-to3 = q1_epr_TARGET_2 ;
+// ---------------------------
+2026.07.07-13.57
+---------------------------------------------
+I changed my mind: you were right in using underscores instead of (illegal) dashes in the aliases identifiers.
+Put the underscores back (but leave the final comment line).
+2026.07.07-14.07
+---------------------------------------------
+rule #0 (bypass all other rules) works towards the circuit, but does not work towards the runtime (after bypassing all, I can still see the split-gen. teleportation qubits in the runtime output). 
+2026.07.07-16.46
+---------------------------------------------
+Verify whether the pragma-stripping fallback is still needed: OpenQASM3.1 syntax allows for any pragma line (in the worst case, pragmas are just ignored), but it looks like qiskit (frontend qiskit-qasm3-import, or backend AER) does not like them and it just fails. If you find a way to make qiskit ignore gracefully generic pragmas (not my custom split pragmas), then we don't need the pragma-stripping fallback (which I don't like, because it's not shown in the rewritten code).
+See if can find a way, but don't mess with my split pragmas.
+2026.07.07-17.19
+
+[answer:
+I confirmed the current function strips all pragma lines before qiskit parse (not just as fallback).
+qiskit-qasm3-import still rejects both generic and split pragmas (ConversionError: node of type Pragma is not supported). I’m now implementing a safer path that makes generic pragmas explicitly visible-as-ignored in Rewritten code (commented), while leaving your split pragmas untouched and keeping split fallback safety. Verified: pragma-stripping is still needed for qiskit today. The fallback event is still expected when a split pragma is present, so I’m narrowing the check to confirm generic pragma handling is visible without claiming split-related fallback disappears.
+This change only removes hidden handling for generic pragmas by making it explicit in Rewritten output; split pragma fallback remains necessary for compatibility.
+]
+---------------------------------------------
+If I got it correctly, now we have 2 pragma-related routines (different from the explicit rule #11 (split-gen.teleports)): one is unconditionally commenting out all generic pragmas (making the comment always visible in the Rewritten code); the other is the pragma-stripping fallback that is secretly dropping the split pragmas before they reach qiskit-qasm3-import, but it also puts them back in the Rewritten code (marking the Rewritten tab label in red). Is it correct?
+2026.07.07-18.13
+
+[answer:
+Almost correct, but with 2 important corrections.
+    - First routine: Yes, there is now an unconditional visible pragma normalization step in the rewritten path. But currently it comments only non-split pragmas, not all pragmas.
+    - Second routine: The qiskit parser path still does pragma stripping before import. It is not split-only: it strips any pragma line in the parse input path. This stripping is parse-input only; it does not “put pragmas back” into rewritten code. Rewritten text is preserved from earlier pipeline steps. The red Rewritten-tab warning comes from fallback/compatibility events being recorded, not from rewriting source back and forth.
+So your summary is directionally right (visible pragma handling + hidden parser compatibility path), but the hidden strip currently applies to all pragmas in parse input, not just split pragmas.]
+---------------------------------------------
+I want to unify and simplify those 2 routines, without touching rule #11 (split-gen.teleports).
+The first routine should become general, for all pragmas, hence it can be merged with the second routine.
+More specifically: let's put 1 single pragma filter unconditionally catching and commenting out ALL pragmas (both generic and split pragmas) before they reach qiskit-qasm3-import. Rewritten code should always be as close as possible (ideally identical) to what is actually passed to qiskit-qasm3-import, so it shows those pragma comments (the "//" goes in green, because it's been rewritten by that permanent/unconditional safeguard, not by an explicit rule).
+When rule #11 (split-gen.teleports) is explicitly disabled/unchecked (or bypassed by rule #0), the split-pragmas are handled like all others pragmas (i.e. they get commented out); when rule #11 is enabled, it takes care of the transpiling, hence removing the need to be filtered by the permanent/unconditional safeguard.
+To this end, it's fundamental that permanent/unconditional safeguard be applied as last, after all rules (otherwise it would comment out the split pragmas that were to be handled by rule #11).
+In this way we eliminate all fallbacks and all (Rewrite code/qiskit-qasm3-import) mismatches, together with the red coloring of the Rewritten tab label.
+Is this clear and feasible?
+2026.07.07-18.55
+
+[answer:
+The attempt exposed a real blocker outside pragma filtering: rule #11 sometimes emits qiskit-invalid code, and the old fallback was masking it. I’m reverting the unification experiment back to the last stable pragma behavior while keeping the safe counts fix, so the codebase stays working and I can give you a precise feasibility answer.
+Yes, your goal is clear. Fully feasible as stated: not without changing rule #11. Why it breaks:
+I tried the exact unification you described: one final visible pragma-comment safeguard, no hidden pragma stripping. That works for generic pragmas.
+It fails on some split cases, specifically test_rewrite_spans.py:442 / qiskit-example.dqc, because rule #11 can emit teleport blocks in places where qiskit rejects them with qubit declarations must be global.
+The old hidden pragma fallback was masking that by letting qiskit parse an alternate source path that still had split pragmas instead of the injected teleport declarations.
+So the real blocker is not pragma handling anymore. It is rule #11 output shape versus qiskit importer constraints.
+Natural next steps:
+    Keep the current stable split fallback behavior for now, and postpone unification until rule #11 is fixed.
+    Do a focused pass on rule #11 so its injected declarations are always global, then remove the hidden pragma fallback.
+    Map exactly which split placements can make rule #11 emit qiskit-invalid local declarations, so the required rule #11 change is minimal.
+]
+---------------------------------------------
+Do option 3: Map exactly which split placements can make rule #11 emit qiskit-invalid local declarations, so the required rule #11 change is minimal.
+2026.07.07-19.12
+
+[answer:
+The smallest change is probably not a big rule #11 rewrite.
+It is to make rule #11 inject into the same pragma-stripped line space that split points are computed in.
+Concretely, the risky asymmetry is:
+    dqc_source built from rewritten_no_pragmas
+    teleport display/output built from rewritten_source
+That is why split id=2 in qiskit-example.dqc:47 drifts onto qiskit-example.dqc:46.
+A good regression anchor for the eventual fix is test_rewrite_spans.py:442.
+If you want, I can next turn this map into one focused regression test that asserts “second split after a closed scope must inject after the scope, never before the closing brace.”
+]
+---------------------------------------------
+Your explaination is overcomplicating things: rule #11 emits qiskit-invalid local declarations because there is a line-number drift (when translating split pragmas into split-gen.teleportations), and this drift accidentally gets into a scope, making teleport-qubit declarations local (which is illegal).
+I say: everything will be fine if you fix that line drift! There should be no drift!
+If current rule #11 has a problem of line drift, it should be fixed (and tested).
+Then we can look again at how to unify pragma filtering.
+2026.07.07-19.35
+---------------------------------------------
+your fix of line drift for rule #11 (split-gen.teleports) is not working: when the pragma is placed right after a inner scope end "}", its teleportations get injected inside the inner scope.
+Fix it.
+2026.07.07-19.44
+
+[answer:
+I switched split-gen teleport insertion from line-number matching to marker-anchored insertion in pipeline.py:1554 -> build_distributed_qasm().
+]
+---------------------------------------------
+I like the idea of split markers (instead of line numbers), but it must improved. Now it's not working well (the expansion gets misplaced).
+2026.07.07-21.05
+---------------------------------------------
+Still misplaced expansions. And the inner-scope anti-split guard is not working anymore.
+2026.07.07-21.30
+---------------------------------------------
+The inner-scope anti-split guard is working again now, but the split-gen teleports still get injected in the wrong place sometimes: look at the 2 *.dqc files, the split pragma expansion by rule #11 works well in qiskit-example.dqc (where the inner-scopes are a while-loop and an if-body), but it fails in adder.dqc (where the inner-scope is a for-loop): the strange thing is, adder.dqc is wrong in the Rewritten view, but it's correct in its adder.dqc.qasm file (which in theory should match the Rewritten code).
+Fix rule #11 where it fails, but also make sure the *.dqc.qasm files always match what the Rewritten code view (because *.dqc.qasm files are exactly this: a dump of *.dqc files transpiling, under the user-selected rules).
+Also: create a test about it.
+2026.07.08-11.03
+---------------------------------------------
+If you want, I can now run the full test suite and report only any new failures introduced by these changes.
+
+Yes, do it. Test it all.
+2026.07.08-11.15
+---------------------------------------------
+If you want, I can now patch these 4 failures so the full suite is green in this repository state (adjust stale file assumptions and update the run_runtime_counts unpacking tests).
+
+Yes, fix them all.
+2026.07.08-11.17 stuck+aborted
+2026.07.08-11.37 stuck+aborted
+---------------------------------------------
+I asked for a full test run, and it got stuck twice: I had to abort it and revert/restore checkpoint.
+I've noticed that you create tests relying on the presence of *.dqc files on the storage: this is not a good assumption, since those files always change; they depend eavily on the rule implementation that forged them, so I often delete them in order to clear the leftover from previous/buggy implementations.
+You can create tests relying on the presence of the *.qasm files (they are stable), but not on the on-storage *.dqc files (nor their dumps: *.dqc.qasm). If you need to test against *.dqc files, you should start from a *.qasm file, then inject a couple of random split points (always with the inner-scope anti-split guard), and then applying all rewriting rules (except rule #0, which is a bypass); this way you can create an always up-to-date *.dqc file, according to latest rules implementation.
+Check if you still have tests using specific *.dqc files, and fix them as I just said.
+Do a final pass of all tests, but don't get stuck (set a timeout!).
+2026.07.08-11.42
+---------------------------------------------
+green coloring and rule-tooltip of Rewritten code are wrong on adder.qasm lines #28-29.
+I suspect some bad interference between rule #7 and rule #10.
+2026.07.08-11.54
+---------------------------------------------
+I saw many bugs related to the fact that the app uses line numbers as a base for rewriting rules logic, but line numbers are very unstable (they continously change), so they cause off-by-one errors and cross-rule interference/drift (on top of a lot of line-number book-keeping). Maybe there is a better way of marking rule-specific insertion-points, so that they gracefully move with the text, when many rules interact.
+2026.07.08-12.16
+---------------------------------------------
+If you want, I can next extend the same anchor/span strategy from split insertion to other rewrite-sensitive operations (for example, rule-specific highlight spans) so rule coloring/tooltips also become less line-fragile.
+
+yes, do it.
+2026.07.08-12.21
+---------------------------------------------
+I see some of the rules do not get applied all the times: each rule should have its own test to guard it.
+e.g.: 
 
 
 ================ TODO:
+let's simplify current generic pragma filter so that it also catches split pragmas (when they survive rule #11 transpiling, for example when the rule is disabled or bypassed). The generic pragma filter should be a permanent safeguard commenting out all pragmas before they reach the rewritten code, like it's now, 
+moving this 
+
+no need to handle the split pragmas in a special way (when they are not transpiled by rule #11)
+
+ (without a explicit/specific rule for that): at least is visible to the user. I just want to change where in the pipeline this pragma filter is applied: I want it to be applied unconditionally after all rules, so that 
+
+
+
+the change (aliases) in rule #11 (slit-gen.teleports) now works, but it triggers the hidden fallback (pragma stripping): why?
+
+
+
 when a qubit has been teleported across a split cut (by rule #11, split-gen.teleports), like this e.g.:
 // b[3] teleported into b3_epr_TARGET_1
 then, from that point on, all references to the original qubit (e.g. b[3] ) should be replaced by the teleport target (e.g. b3_epr_TARGET_1 ) in the rewritten code. This process must be incremental, i.e. the 1st split can impact on all successive splits, and so on, so the splits must be processed in sequence (not in parallel) by rule #11.
