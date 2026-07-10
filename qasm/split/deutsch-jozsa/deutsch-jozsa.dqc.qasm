@@ -24,6 +24,7 @@ barrier q[0], q[1], q[2], q[3];
 x q[1];
 ctrl(3) @ x q[0], q[1], q[2], q[3];
 x q[1];
+barrier q[0], q[1], q[2], q[3];
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
@@ -90,7 +91,6 @@ telept_Xcorrect_q3_1 = measure q3_epr_1;
 if(telept_Zcorrect_q3_1) z q3_epr_TARGET_1;
 if(telept_Xcorrect_q3_1) x q3_epr_TARGET_1;
 // q[3] teleported into q3_epr_TARGET_1
-barrier q[0], q[1], q[2], q[3];
 c[0] = measure q[0];
 c[1] = measure q[1];
 c[2] = measure q[2];

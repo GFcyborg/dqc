@@ -1215,16 +1215,6 @@ let q1-to3 = q1_epr_TARGET_2 ;
 
 2026.07.07-13.48
 ---------------------------------------------
-...
-
-I asked for a full test run, and it got stuck twice: I had to abort it and revert/restore checkpoint.
-...
-2026.07.08-11.42
----------------------------------------------
-green coloring and rule-tooltip of Rewritten code are wrong on adder.qasm lines #28-29.
-I suspect some bad interference between rule #7 and rule #10.
-2026.07.08-11.54
----------------------------------------------
 I saw many bugs related to the fact that the app uses line numbers as a base for rewriting rules logic, but line numbers are very unstable (they continously change), so they cause off-by-one errors and cross-rule interference/drift (on top of a lot of line-number book-keeping). Maybe there is a better way of marking rule-specific insertion-points, so that they gracefully move with the text, when many rules interact.
 2026.07.08-12.16
 ---------------------------------------------
@@ -1234,8 +1224,6 @@ yes, do it.
 2026.07.08-12.21
 ---------------------------------------------
 I see some of the rules do not get applied all the times: each rule should have its own test to guard it.
-e.g.: 
-
 
 ================ TODO:
 let's simplify current generic pragma filter so that it also catches split pragmas (when they survive rule #11 transpiling, for example when the rule is disabled or bypassed). The generic pragma filter should be a permanent safeguard commenting out all pragmas before they reach the rewritten code, like it's now, 

@@ -196,15 +196,31 @@ majority cin[0], b[0], a[0];
 majority a[0], b[0 + 1], a[0 + 1];
 majority a[1], b[1 + 1], a[1 + 1];
 majority a[2], b[2 + 1], a[2 + 1];
-// pragma xxx
 cx a[3], cout[0];
 unmaj a[2],b[2+1],a[2+1];
 unmaj a[1],b[1+1],a[1+1];
 unmaj a[0],b[0+1],a[0+1];
-// pragma xxx
 unmaj cin[0], b[0], a[0];
 measure b[0] -> ans[0];
 measure b[1] -> ans[1];
 measure b[2] -> ans[2];
 measure b[3] -> ans[3];
+/* Teleporting qubits into chunk 3:
+ * cout[0] from chunk 2
+ */
+qubit cout0_epr_2;
+qubit cout0_epr_TARGET_2;
+bit telept_Zcorrect_cout0_2;
+bit telept_Xcorrect_cout0_2;
+reset cout0_epr_2;
+reset cout0_epr_TARGET_2;
+h cout0_epr_2;
+cx cout0_epr_2, cout0_epr_TARGET_2;
+cx cout[0], cout0_epr_2;
+h cout[0];
+telept_Zcorrect_cout0_2 = measure cout[0];
+telept_Xcorrect_cout0_2 = measure cout0_epr_2;
+if(telept_Zcorrect_cout0_2) z cout0_epr_TARGET_2;
+if(telept_Xcorrect_cout0_2) x cout0_epr_TARGET_2;
+// cout[0] teleported into cout0_epr_TARGET_2
 measure cout[0] -> ans[4];

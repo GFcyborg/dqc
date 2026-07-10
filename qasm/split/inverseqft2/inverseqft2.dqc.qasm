@@ -15,26 +15,15 @@ h q[0];
 measure q[0] -> c0;
 if(c0) { rz(pi / 2) q[1];
 }
+h q[1];
+measure q[1] -> c1;
+if(c0) { rz(pi / 4) q[2]; }
+if(c1) { rz(pi / 2) q[2]; }
+h q[2];
 /* Teleporting qubits into chunk 2:
- * q[1] from chunk 1
  * q[2] from chunk 1
  * q[3] from chunk 1
  */
-qubit q1_epr_1;
-qubit q1_epr_TARGET_1;
-bit telept_Zcorrect_q1_1;
-bit telept_Xcorrect_q1_1;
-reset q1_epr_1;
-reset q1_epr_TARGET_1;
-h q1_epr_1;
-cx q1_epr_1, q1_epr_TARGET_1;
-cx q[1], q1_epr_1;
-h q[1];
-telept_Zcorrect_q1_1 = measure q[1];
-telept_Xcorrect_q1_1 = measure q1_epr_1;
-if(telept_Zcorrect_q1_1) z q1_epr_TARGET_1;
-if(telept_Xcorrect_q1_1) x q1_epr_TARGET_1;
-// q[1] teleported into q1_epr_TARGET_1
 qubit q2_epr_1;
 qubit q2_epr_TARGET_1;
 bit telept_Zcorrect_q2_1;
@@ -65,15 +54,11 @@ telept_Xcorrect_q3_1 = measure q3_epr_1;
 if(telept_Zcorrect_q3_1) z q3_epr_TARGET_1;
 if(telept_Xcorrect_q3_1) x q3_epr_TARGET_1;
 // q[3] teleported into q3_epr_TARGET_1
-h q[1];
-measure q[1] -> c1;
-if(c0) { rz(pi / 4) q[2]; }
-if(c1) { rz(pi / 2) q[2]; }
-h q[2];
 measure q[2] -> c2;
 if(c0) { rz(pi / 8) q[3]; }
 if(c1) { rz(pi / 4) q[3]; }
 if(c2) { rz(pi / 2) q[3]; }
+h q[3];
 /* Teleporting qubits into chunk 3:
  * q[3] from chunk 2
  */
@@ -92,5 +77,4 @@ telept_Xcorrect_q3_2 = measure q3_epr_2;
 if(telept_Zcorrect_q3_2) z q3_epr_TARGET_2;
 if(telept_Xcorrect_q3_2) x q3_epr_TARGET_2;
 // q[3] teleported into q3_epr_TARGET_2
-h q[3];
 measure q[3] -> c3;
