@@ -4,7 +4,9 @@ import re
 import unittest
 
 from pathlib import Path
+from unittest.mock import patch
 
+import app.pipeline as pipeline_module
 from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, ordered_active_rule_ids, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_generated_teleportations, split_points_from_source, substitute_inputs
 
 
@@ -549,6 +551,47 @@ class RewriteSpanTests(unittest.TestCase):
         ])
         self.assertEqual(result.rewritten_source, expected)
 
+    def test_active_rules_run_in_numeric_pipeline_without_jumps(self) -> None:
+        source = "\n".join([
+            "qubit[1] q;",
+            "reset q;",
+        ])
+        rules_shuffled = [
+            RuleState(rule_id=10, name="Unfold broadcast operations", description="", enabled=True),
+            RuleState(rule_id=8, name="Inline let-aliases", description="", enabled=True),
+            RuleState(rule_id=1, name="Drop comments", description="", enabled=True),
+            RuleState(rule_id=3, name="Inject OPENQASM 3.1", description="", enabled=True),
+            RuleState(rule_id=0, name="Bypass all rewrites", description="", enabled=False),
+        ]
+
+        call_order: list[int] = []
+
+        def mark_rule(rule_id: int):
+            def _mark(lines, *args, **kwargs):
+                call_order.append(rule_id)
+                return [*lines, f"// RULE_{rule_id}"]
+
+            return _mark
+
+        def mark_rule_8(lines, *args, **kwargs):
+            call_order.append(8)
+            rewritten_lines = [*lines, "// RULE_8"]
+            kept_line_numbers = list(range(1, len(rewritten_lines) + 1))
+            return rewritten_lines, kept_line_numbers
+
+        with patch.object(pipeline_module, "rewrite_comments_and_blanks_with_map", side_effect=lambda lines, *args, **kwargs: (mark_rule(1)(lines), list(range(1, len(lines) + 2)))), patch.object(
+            pipeline_module, "maybe_add_header", side_effect=mark_rule(3)
+        ), patch.object(pipeline_module, "rewrite_inline_let_aliases_with_map", side_effect=mark_rule_8), patch.object(
+            pipeline_module, "rewrite_unfold_broadcast_operations", side_effect=mark_rule(10)
+        ):
+            result = rewrite_and_analyze(source, rules_shuffled, set(), {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertEqual(call_order, [1, 3, 8, 10])
+
+        marker_positions = [result.rewritten_source.find(f"// RULE_{rule_id}") for rule_id in [1, 3, 8, 10]]
+        self.assertTrue(all(position >= 0 for position in marker_positions))
+        self.assertEqual(marker_positions, sorted(marker_positions))
+
     def test_chunk_dependencies_track_cross_chunk_variable_use(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
@@ -574,6 +617,55 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn(1, second_flow.incoming_sources["q[0]"])
         self.assertIsNotNone(result.chunk_graph)
         self.assertTrue(result.chunk_graph.has_edge(1, 2))
+
+    def test_split_expansion_does_not_drift_after_line_expanding_broadcast_rewrite(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[2] q;",
+            "bit[2] c;",
+            "measure q -> c;",
+            "x q[0];",
+        ])
+        split_before_lines = {6}
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, True) for rule in DEFAULT_RULES if rule.rule_id != 0]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=1, timeout_s=1, execute_runtime=False)
+        lines = result.rewritten_source.splitlines()
+
+        teleport_start = next(index for index, line in enumerate(lines) if line.startswith("/* Teleporting qubits into chunk 2:"))
+        x_line = next(index for index, line in enumerate(lines) if line.strip() == "x q[0];")
+        measure0 = next(index for index, line in enumerate(lines) if "measure q[0]" in line)
+        measure1 = next(index for index, line in enumerate(lines) if "measure q[1]" in line)
+
+        self.assertLess(measure0, teleport_start)
+        self.assertLess(measure1, teleport_start)
+        self.assertLess(teleport_start, x_line)
+
+    def test_split_expansion_stays_after_scope_closing_brace(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            "include \"stdgates.inc\";",
+            "qubit[1] q;",
+            "bit[1] c;",
+            "if (true) {",
+            "    x q[0];",
+            "}",
+            "h q[0];",
+            "measure q[0] -> c[0];",
+        ])
+        split_before_lines = {8}
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, True) for rule in DEFAULT_RULES if rule.rule_id != 0]
+
+        result = rewrite_and_analyze(source, rules, split_before_lines, {}, shots=1, timeout_s=1, execute_runtime=False)
+        lines = result.rewritten_source.splitlines()
+
+        closing_brace = next(index for index, line in enumerate(lines) if line.strip() == "}")
+        teleport_start = next(index for index, line in enumerate(lines) if line.startswith("/* Teleporting qubits into chunk 2:"))
+        h_line = next(index for index, line in enumerate(lines) if line.strip() == "h q[0];")
+
+        self.assertLess(closing_brace, teleport_start)
+        self.assertLess(teleport_start, h_line)
 
     def test_rule6_teleport_comments_match_chunk_flow_dependencies(self) -> None:
         source = "\n".join([

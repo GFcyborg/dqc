@@ -57,6 +57,8 @@ from .pipeline import (
     smoke_test_hadamard,
     summary_text,
     run_runtime_counts,
+    contains_internal_display_markers,
+    strip_internal_display_markers,
     validate_qcomm_template,
     write_text,
 )
@@ -1127,8 +1129,13 @@ already declared in the surrounding chunk code.</p>
     def _rule_bypass_enabled(self) -> bool:
         return any(rule.rule_id == 0 and rule.enabled for rule in self.rules)
 
+    def _strip_display_only_rewrite_markers(self, text: str) -> str:
+        return strip_internal_display_markers(text)
+
     def rewritten_text(self) -> str:
-        return self._latest_result.rewritten_source if hasattr(self, "_latest_result") else self.original_editor.toPlainText()
+        if hasattr(self, "_latest_result"):
+            return self._strip_display_only_rewrite_markers(self._latest_result.rewritten_source)
+        return self.original_editor.toPlainText()
 
     def _iter_ast_nodes(self, node: Any):
         yield node
@@ -1511,17 +1518,33 @@ already declared in the surrounding chunk code.</p>
         if not self.split_points:
             return None
         raw_source = self._split_save_source()
-        dqc_source, dqc_qasm = build_distributed_qasm(raw_source, self.split_points)
+        dqc_source, _ = build_distributed_qasm(raw_source, self.split_points)
         target_dir = self.split_root / self.current_file.stem
         dqc_path = target_dir / f"{self.current_file.stem}.dqc"
+        qasm_dump_path = target_dir / f"{self.current_file.stem}.dqc.qasm"
+        # Persist the exact text shown in the Rewritten view so the saved dump
+        # always reflects the active-rule pipeline selected by the user.
+        expected_qasm_dump = self.rewritten_text()
         write_text(dqc_path, dqc_source)
-        write_text(target_dir / f"{self.current_file.stem}.dqc.qasm", dqc_qasm)
+        write_text(qasm_dump_path, expected_qasm_dump)
+        self._assert_saved_qasm_dump_matches_rewritten_view(qasm_dump_path, expected_qasm_dump)
         return dqc_path
+
+    def _assert_saved_qasm_dump_matches_rewritten_view(self, qasm_dump_path: Path, expected_qasm_dump: str) -> None:
+        saved_qasm_dump = read_text(qasm_dump_path)
+        if contains_internal_display_markers(saved_qasm_dump):
+            raise RuntimeError("Save aborted: .dqc.qasm dump contains internal display-only marker lines.")
+        if saved_qasm_dump != expected_qasm_dump:
+            raise RuntimeError("Save aborted: .dqc.qasm dump does not match the Rewritten code view.")
 
     def save_split_chunks(self) -> None:
         if not self.split_points:
             return
-        saved_dqc = self._persist_split_artifacts()
+        try:
+            saved_dqc = self._persist_split_artifacts()
+        except Exception as exc:
+            QMessageBox.critical(self, "Save split chunks", str(exc))
+            return
         if saved_dqc is None:
             return
         self.load_file(saved_dqc, preserve_parameter_bindings=True, prompt_for_parameters=False)

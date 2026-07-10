@@ -1124,6 +1124,33 @@ The runtime is still not using the same code as the other views!
 I want the Rewrite code to show the real/ultimate/final code run by the AER (and all other views/graphs): there must be no change whatsoever to the code shown in Rewritten code view. For this reason, I want to bring to visibility the last hidden fallback (++ alias restoration): can it be represented by another unconditional rule (I suggest #98) ?
 2026.07.09-23.06
 ---------------------------------------------
+I see you commented the new rule #98 (restore ++ concat) with "always applied first": what does it mean?
+All the [active] rules should be applied in the order of their numbering (make a test to check that they don't skip nor jump), and in a pipeline (i.e. each rule takes as input the output of the previous [active] rule).
+2026.07.10-11.34
+---------------------------------------------
+Just remove the parentheses and its content from rule #98 (restore ++ concat) comment: there is no need to say "always applied after conditional ...". It's already implicit in "unconditional" !
+2026.07.10-11.42
+---------------------------------------------
+When saving a *.dqc file there is also a *.dqc-qasm byproduct which is the dump of the rewritten dqc code, i.e. the *.dqc.qasm content should match what's shown in the Rewritten code view, which in turn depends on the current/custom user-selection of active rewriting rules. Create a guard/test/check for this, to be run on each save.
+2026.07.10-12.06
+---------------------------------------------
+you say it's done, but I've just found a mismatch between a *.dqc file Rewritten code and its dump in *.dqc.qasm
+The mismatch is located at the end of split-gen.teleports blocks, where the following appear (only in *dqc.qasm files):
+// <dqc:teleport-end>
+e.g. adder.dqc.qasm
+Fix it, at all levels (code logic, guards, post-save checks, unit tests) ... and stop lying !
+2026.07.10-12.25
+---------------------------------------------
+this last error calls for a deeper check of what's happening under the hood: are there other hidden markers, like the above <dqc:teleport-end> ? It's ok to use them internally, but they should never spill out into the Rewritten code (which should be the single source of truth for everything run/saved/represented downstream in the app: no change is allowed downstream from Rewritten code, because such change would be invisible to the user).
+2026.07.10-12.38
+---------------------------------------------
+make sure split pragmas expansions (by rule #11) do not drift: this is a big risk when split pragmas are placed close to the end of an inner-scope, because a simple off-by-one error in line-tracking can have huge impact; see what's just happened with qiskit-example.dqc and adder.dqc (see how their split-pragmas has been misplaced in their *.dqc.qasm dumps).
+More in general, the line-number book-keeping is too brittle, in a context of a lot of rewriting rules possibly cross-interfering. Can it be made more robust?
+2026.07.10-12.56
+---------------------------------------------
+
+
+
 
 
 
@@ -1158,47 +1185,10 @@ let q1-to3 = q1_epr_TARGET_2 ;
 
 2026.07.07-13.48
 ---------------------------------------------
-fix the shortened aliases formatting to EXACTLY match my request (including the final comment line, and the dashes instead of underscores), e.g.:
-let q0-to3 = q0_epr_TARGET_2 ;
-let q1-to3 = q1_epr_TARGET_2 ;
-// ---------------------------
-2026.07.07-13.57
----------------------------------------------
-I changed my mind: you were right in using underscores instead of (illegal) dashes in the aliases identifiers.
-Put the underscores back (but leave the final comment line).
-2026.07.07-14.07
----------------------------------------------
 rule #0 (bypass all other rules) works towards the circuit, but does not work towards the runtime (after bypassing all, I can still see the split-gen. teleportation qubits in the runtime output). 
 2026.07.07-16.46
 ---------------------------------------------
-Verify whether the pragma-stripping fallback is still needed: OpenQASM3.1 syntax allows for any pragma line (in the worst case, pragmas are just ignored), but it looks like qiskit (frontend qiskit-qasm3-import, or backend AER) does not like them and it just fails. If you find a way to make qiskit ignore gracefully generic pragmas (not my custom split pragmas), then we don't need the pragma-stripping fallback (which I don't like, because it's not shown in the rewritten code).
-See if can find a way, but don't mess with my split pragmas.
-2026.07.07-17.19
-
-[answer:
-I confirmed the current function strips all pragma lines before qiskit parse (not just as fallback).
-qiskit-qasm3-import still rejects both generic and split pragmas (ConversionError: node of type Pragma is not supported). I’m now implementing a safer path that makes generic pragmas explicitly visible-as-ignored in Rewritten code (commented), while leaving your split pragmas untouched and keeping split fallback safety. Verified: pragma-stripping is still needed for qiskit today. The fallback event is still expected when a split pragma is present, so I’m narrowing the check to confirm generic pragma handling is visible without claiming split-related fallback disappears.
-This change only removes hidden handling for generic pragmas by making it explicit in Rewritten output; split pragma fallback remains necessary for compatibility.
-]
----------------------------------------------
-If I got it correctly, now we have 2 pragma-related routines (different from the explicit rule #11 (split-gen.teleports)): one is unconditionally commenting out all generic pragmas (making the comment always visible in the Rewritten code); the other is the pragma-stripping fallback that is secretly dropping the split pragmas before they reach qiskit-qasm3-import, but it also puts them back in the Rewritten code (marking the Rewritten tab label in red). Is it correct?
-2026.07.07-18.13
-
-[answer:
-Almost correct, but with 2 important corrections.
-    - First routine: Yes, there is now an unconditional visible pragma normalization step in the rewritten path. But currently it comments only non-split pragmas, not all pragmas.
-    - Second routine: The qiskit parser path still does pragma stripping before import. It is not split-only: it strips any pragma line in the parse input path. This stripping is parse-input only; it does not “put pragmas back” into rewritten code. Rewritten text is preserved from earlier pipeline steps. The red Rewritten-tab warning comes from fallback/compatibility events being recorded, not from rewriting source back and forth.
-So your summary is directionally right (visible pragma handling + hidden parser compatibility path), but the hidden strip currently applies to all pragmas in parse input, not just split pragmas.]
----------------------------------------------
-I want to unify and simplify those 2 routines, without touching rule #11 (split-gen.teleports).
-The first routine should become general, for all pragmas, hence it can be merged with the second routine.
-More specifically: let's put 1 single pragma filter unconditionally catching and commenting out ALL pragmas (both generic and split pragmas) before they reach qiskit-qasm3-import. Rewritten code should always be as close as possible (ideally identical) to what is actually passed to qiskit-qasm3-import, so it shows those pragma comments (the "//" goes in green, because it's been rewritten by that permanent/unconditional safeguard, not by an explicit rule).
-When rule #11 (split-gen.teleports) is explicitly disabled/unchecked (or bypassed by rule #0), the split-pragmas are handled like all others pragmas (i.e. they get commented out); when rule #11 is enabled, it takes care of the transpiling, hence removing the need to be filtered by the permanent/unconditional safeguard.
-To this end, it's fundamental that permanent/unconditional safeguard be applied as last, after all rules (otherwise it would comment out the split pragmas that were to be handled by rule #11).
-In this way we eliminate all fallbacks and all (Rewrite code/qiskit-qasm3-import) mismatches, together with the red coloring of the Rewritten tab label.
-Is this clear and feasible?
-2026.07.07-18.55
-
+...
 [answer:
 The attempt exposed a real blocker outside pragma filtering: rule #11 sometimes emits qiskit-invalid code, and the old fallback was masking it. I’m reverting the unification experiment back to the last stable pragma behavior while keeping the safe counts fix, so the codebase stays working and I can give you a precise feasibility answer.
 Yes, your goal is clear. Fully feasible as stated: not without changing rule #11. Why it breaks:

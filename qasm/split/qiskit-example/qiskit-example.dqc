@@ -52,5 +52,6 @@ if (mid[0]) {
   let inner_alias = q[{0, 1}];
   reset inner_alias;
 }
+pragma dqc.v1.split id=2
 
 out = measure q;

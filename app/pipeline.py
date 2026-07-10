@@ -66,6 +66,7 @@ COMMENT_PATTERN = re.compile(r"//[^\n\r]*|/\*.*?\*/", re.DOTALL)
 HEADER_PATTERN = re.compile(r"^\s*OPENQASM\s+3(?:\.\d+)?\s*;", re.IGNORECASE)
 INCLUDE_PATTERN = re.compile(r"^\s*include\s+\"stdgates\.inc\"\s*;", re.IGNORECASE)
 DQC_PRAGMA_PATTERN = re.compile(r"^\s*pragma\s+dqc\.v1\.split\s+id\s*=\s*(?P<id>[1-9][0-9]*)\s*$", re.IGNORECASE)
+DQC_SPLIT_ANCHOR_PATTERN = re.compile(r"^\s*pragma\s+dqc\.internal\.split_anchor\s+id\s*=\s*(?P<id>[1-9][0-9]*)\s*$", re.IGNORECASE)
 BIT_DECL_PATTERN = re.compile(r"^\s*bit(?:\[[^\]]+\])?\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?://.*)?$", re.MULTILINE)
 BIT_IF_CAST_PATTERN = re.compile(r"^(?P<prefix>\s*if\s*\(\s*)(?P<expr>[A-Za-z_][A-Za-z0-9_]*(?:\s*\[[^\]]+\])*)\s*==\s*(?P<value>[01])\s*(?P<suffix>\)\s*.*)$")
 UINT_TOKEN_PATTERN = re.compile(r"\buint\b")
@@ -92,6 +93,22 @@ STDGATES_INCLUDE_RE = re.compile(r'(?im)^\s*include\s+"stdgates\.inc"\s*;\s*$')
 # where the orange-coloured teleport block ends, so that subsequent lines
 # from other rewriting rules are correctly coloured green.
 DQC_TELEPORT_BLOCK_END_SENTINEL = "// <dqc:teleport-end>"
+
+# Internal-only marker lines that may assist rendering logic, but must never
+# be consumed by runtime/save/analysis downstream paths.
+INTERNAL_DISPLAY_ONLY_MARKERS: tuple[str, ...] = (
+    DQC_TELEPORT_BLOCK_END_SENTINEL.strip(),
+)
+
+
+def strip_internal_display_markers(text: str) -> str:
+    marker_set = set(INTERNAL_DISPLAY_ONLY_MARKERS)
+    return "\n".join(line for line in text.splitlines() if line.strip() not in marker_set)
+
+
+def contains_internal_display_markers(text: str) -> bool:
+    marker_set = set(INTERNAL_DISPLAY_ONLY_MARKERS)
+    return any(line.strip() in marker_set for line in text.splitlines())
 
 # ---------------------------------------------------------------------------
 # q-comm_template.qasm – required identifiers and validation
@@ -206,7 +223,7 @@ DEFAULT_RULES = [
 ]
 
 UNCONDITIONAL_RULES = [
-    RuleState(98, "Restore ++ alias concatenation", "Normalize ++ concatenations in let/const to index-set syntax for qiskit-qasm3-import (always applied first).", enabled=True),
+    RuleState(98, "Restore ++ alias concatenation", "Normalize ++ concatenations in let/const to index-set syntax for qiskit-qasm3-import.", enabled=True),
     RuleState(99, "No pragmas into qiskit", "Unconditional rule: comment out all pragmas before qiskit-qasm3-import (always applied last).", enabled=True),
 ]
 
@@ -1141,7 +1158,8 @@ def rewrite_restore_alias_concatenation(lines: list[str], spans: list[RewriteSpa
     """Rule #98 (unconditional): Restore ++ alias concatenations to index-set syntax.
     
     Converts `let a = q[0] ++ q[1]` to `let a = q[{0, 1}]` for qiskit-qasm3-import compatibility.
-    This is always applied as an unconditional safeguard before pragma handling (rule #99).
+    This is always applied as an unconditional safeguard after conditional rules,
+    and before pragma handling (rule #99).
     """
     rewritten_lines: list[str] = []
     
@@ -1317,6 +1335,40 @@ def add_split_markers(lines: list[str], split_lines: set[int]) -> str:
             next_id += 1
         out.append(line)
     return "\n".join(out)
+
+
+def add_split_anchors(lines: list[str], split_lines: set[int]) -> list[str]:
+    if not split_lines:
+        return list(lines)
+    split_lines_sorted = sorted(line for line in split_lines if line >= 1)
+    out: list[str] = []
+    split_idx = 0
+    next_id = 1
+    total_lines = len(lines)
+    for line_no in range(1, total_lines + 1):
+        while split_idx < len(split_lines_sorted) and split_lines_sorted[split_idx] == line_no:
+            out.append(f"pragma dqc.internal.split_anchor id={next_id}")
+            split_idx += 1
+            next_id += 1
+        out.append(lines[line_no - 1])
+    while split_idx < len(split_lines_sorted) and split_lines_sorted[split_idx] == total_lines + 1:
+        out.append(f"pragma dqc.internal.split_anchor id={next_id}")
+        split_idx += 1
+        next_id += 1
+    return out
+
+
+def resolve_split_anchors(lines: list[str]) -> tuple[list[str], set[int], dict[int, int]]:
+    clean_lines: list[str] = []
+    resolved_split_lines: set[int] = set()
+    old_to_new_line: dict[int, int] = {}
+    for old_line_no, line in enumerate(lines, start=1):
+        if DQC_SPLIT_ANCHOR_PATTERN.match(line):
+            resolved_split_lines.add(len(clean_lines) + 1)
+            continue
+        clean_lines.append(line)
+        old_to_new_line[old_line_no] = len(clean_lines)
+    return clean_lines, resolved_split_lines, old_to_new_line
 
 
 def _source_qubit_token(source_qubit: str) -> str:
@@ -2324,11 +2376,12 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     active_rule_ids = ordered_active_rule_ids(rules)
     spans: list[RewriteSpan] = []
     lines = normalize_lines(source)
-    original_lines = list(lines)
+    anchored_lines = add_split_anchors(lines, split_lines)
+    original_lines = list(anchored_lines)
     if bypass:
-        rewritten = lines
+        rewritten = anchored_lines
     else:
-        rewritten = lines
+        rewritten = anchored_lines
         for rule_id in active_rule_ids:
             if rule_id == 1:
                 rewritten, kept_line_numbers = rewrite_comments_and_blanks_with_map(
@@ -2378,6 +2431,13 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
                 rewritten = rewrite_resolve_chained_indexing(rewritten, True, spans)
             elif rule_id == 10:
                 rewritten = rewrite_unfold_broadcast_operations(rewritten, True, spans)
+
+    rewritten, resolved_split_lines, old_to_new_line = resolve_split_anchors(rewritten)
+    for span in spans:
+        mapped_line = old_to_new_line.get(span.line)
+        if mapped_line is not None:
+            span.line = mapped_line
+    split_lines = resolved_split_lines
     
     rewritten_source = "\n".join(rewritten)
     rewritten_no_pragmas = [line for line in normalize_lines(rewritten_source) if not DQC_PRAGMA_PATTERN.match(line)]
@@ -2394,20 +2454,21 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     else:
         canonical_rewritten = rewritten_source
     
-    # Apply unconditional rules in sequence:
-    # Rule #98 (first): Restore ++ alias concatenations to index-set syntax
+    # Apply unconditional rules in sequence after conditional rules:
+    # Rule #98 (first unconditional post-pass): Restore ++ alias concatenations to index-set syntax
     # Rule #99 (last): Comment out all pragmas
     # This ensures ALL downstream consumers (display, parsing, runtime, graphs) see the same code.
     canonical_lines = normalize_lines(canonical_rewritten)
     canonical_lines = rewrite_restore_alias_concatenation(canonical_lines, spans)
     canonical_lines = rewrite_comment_out_pragmas(canonical_lines, spans)
     final_rewritten_source = "\n".join(canonical_lines)
+    downstream_rewritten_source = strip_internal_display_markers(final_rewritten_source)
     
     # Now all consumers use final_rewritten_source
     display_rewritten_source = final_rewritten_source
     
-    qubit_register_names = extract_qubit_register_names(final_rewritten_source)
-    qubit_register_sizes = extract_qubit_register_sizes(final_rewritten_source)
+    qubit_register_names = extract_qubit_register_names(downstream_rewritten_source)
+    qubit_register_sizes = extract_qubit_register_sizes(downstream_rewritten_source)
     chunk_graph = build_chunk_dependency_graph(
         chunk_flows,
         qubit_register_names=qubit_register_names,
@@ -2418,13 +2479,13 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     
     # Try to parse with openqasm3. The final_rewritten_source already has all pragmas commented.
     try:
-        parse_tree = _parse_quietly(parse, final_rewritten_source)
+        parse_tree = _parse_quietly(parse, downstream_rewritten_source)
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {exc}", kind="error"))
     
     # Use final_rewritten_source for all graph computations (DAG, interaction graph, suggestions)
-    dag_graph, interaction_graph, _ = qasm_token_graph(final_rewritten_source)
-    suggested_split_points, suggestion_reason = suggest_split_points(final_rewritten_source, distributed_nodes=distributed_nodes)
+    dag_graph, interaction_graph, _ = qasm_token_graph(downstream_rewritten_source)
+    suggested_split_points, suggestion_reason = suggest_split_points(downstream_rewritten_source, distributed_nodes=distributed_nodes)
     
     circuit_result = None
     counts: dict[str, int] = {}
@@ -2437,7 +2498,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         removed_pragmas = 0
         runtime_error: Exception | None = None
         try:
-            circuit_result, removed_pragmas, parse_fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, final_rewritten_source)
+            circuit_result, removed_pragmas, parse_fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, downstream_rewritten_source)
             fallback_events_set.update(parse_fallback_events)
             runtime_error = None
         except Exception as exc:
@@ -2463,7 +2524,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     split_qasm_lines = normalize_lines(dqc_qasm)
     split_qasm_lines = rewrite_restore_alias_concatenation(split_qasm_lines, spans)
     split_qasm_lines = rewrite_comment_out_pragmas(split_qasm_lines, spans)
-    final_split_qasm = "\n".join(split_qasm_lines)
+    final_split_qasm = strip_internal_display_markers("\n".join(split_qasm_lines))
     
     return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=final_split_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set))
 
