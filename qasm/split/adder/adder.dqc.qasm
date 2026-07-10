@@ -25,7 +25,6 @@ reset b[1];
 reset b[2];
 reset b[3];
 reset cout;
-// pragma dxx
   x a[0];
   x b[0];
   x b[1];
@@ -194,14 +193,15 @@ if(telept_Zcorrect_cout0_1) z cout0_epr_TARGET_1;
 if(telept_Xcorrect_cout0_1) x cout0_epr_TARGET_1;
 // cout[0] teleported into cout0_epr_TARGET_1
 majority cin[0], b[0], a[0];
-// pragma dxxx
 majority a[0], b[0 + 1], a[0 + 1];
 majority a[1], b[1 + 1], a[1 + 1];
 majority a[2], b[2 + 1], a[2 + 1];
+// pragma xxx
 cx a[3], cout[0];
 unmaj a[2],b[2+1],a[2+1];
 unmaj a[1],b[1+1],a[1+1];
 unmaj a[0],b[0+1],a[0+1];
+// pragma xxx
 unmaj cin[0], b[0], a[0];
 measure b[0] -> ans[0];
 measure b[1] -> ans[1];

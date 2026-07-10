@@ -825,15 +825,70 @@ class HtmlCodeView(QTextBrowser):
                 return ""
             return rewritten[prefix:end]
 
+        def _candidate_lines_for_snippet(lines: list[str], snippet: str) -> list[int]:
+            token = snippet.strip()
+            if not token:
+                return []
+            return [idx + 1 for idx, value in enumerate(lines) if token in value]
+
+        def _line_has_rule6_guard(line_text: str, snippet: str) -> bool:
+            token = snippet.strip()
+            if not token:
+                return False
+            pattern = rf"\bif\s*\(\s*{re.escape(token)}\s*\)"
+            return re.search(pattern, line_text) is not None
+
+        def _candidate_lines_for_rule6(lines: list[str], snippet: str) -> list[int]:
+            token = snippet.strip()
+            if not token:
+                return []
+            return [
+                idx + 1
+                for idx, value in enumerate(lines)
+                if token in value and _line_has_rule6_guard(value, token)
+            ]
+
+        def _find_nearest_line(lines: list[str], snippet: str, preferred_line: int, used_lines: set[int]) -> int | None:
+            candidates = [line_no for line_no in _candidate_lines_for_snippet(lines, snippet) if line_no not in used_lines]
+            if not candidates:
+                return None
+            return min(candidates, key=lambda candidate: abs(candidate - preferred_line))
+
+        def _find_nearest_line_rule6(lines: list[str], snippet: str, preferred_line: int, used_lines: set[int]) -> int | None:
+            candidates = [line_no for line_no in _candidate_lines_for_rule6(lines, snippet) if line_no not in used_lines]
+            if not candidates:
+                return None
+            return min(candidates, key=lambda candidate: abs(candidate - preferred_line))
+
+        def _find_nearest_block(lines: list[str], block_lines: list[str], preferred_line: int, used_ranges: list[tuple[int, int]]) -> int | None:
+            if not block_lines or not lines or len(block_lines) > len(lines):
+                return None
+            block_len = len(block_lines)
+            candidates: list[int] = []
+            for start_idx in range(0, len(lines) - block_len + 1):
+                if lines[start_idx:start_idx + block_len] == block_lines:
+                    start_line = start_idx + 1
+                    end_line = start_line + block_len - 1
+                    overlaps = any(not (end_line < left or start_line > right) for left, right in used_ranges)
+                    if overlaps:
+                        continue
+                    candidates.append(start_line)
+            if not candidates:
+                return None
+            return min(candidates, key=lambda candidate: abs(candidate - preferred_line))
+
         self._line_tooltips = {}
         self._teleport_lines = set()
         tooltip_map: dict[int, list[str]] = {}
         visible_lines: set[int] = set()
         partial_highlights: dict[int, list[str]] = {}
-        snippet_tooltips: dict[str, list[tuple[int, str]]] = {}
-        snippet_fragments: dict[str, list[str]] = {}
         line_rule_ids: dict[int, set[int]] = {}
+        pending_snippets: list[tuple[int, str, int, str]] = []
+        pending_blocks: list[tuple[int, list[str], int, str]] = []
+        used_snippet_lines: set[int] = set()
+        used_block_ranges: list[tuple[int, int]] = []
         teleport_tooltip = "Rule 11: split pragma rewritten into teleportation comment block"
+        lines = rewritten_source.splitlines()
         for span in spans:
             rewritten = str(getattr(span, "rewritten", ""))
             if not rewritten.strip():
@@ -845,35 +900,73 @@ class HtmlCodeView(QTextBrowser):
             rule_id = getattr(span, "rule_id", "?")
             message = getattr(span, "message", "")
             tooltip = f"Rule {rule_id}: {message}"
-            tooltip_map.setdefault(line_no, []).append(tooltip)
+            numeric_rule_id = int(rule_id) if isinstance(rule_id, int) else -1
             if isinstance(rule_id, int):
                 line_rule_ids.setdefault(line_no, set()).add(rule_id)
-            if isinstance(rule_id, int) and rule_id in {8, 9}:
-                # Rules 8/9 now emit snippet-level spans from the rewrite stage;
-                # highlight exactly those snippets, not the whole line.
-                snippet = rewritten.strip()
-                if snippet:
-                    partial_highlights.setdefault(line_no, []).append(snippet)
-                    snippet_tooltips.setdefault(snippet, []).append((rule_id, tooltip))
+
+            if "\n" in rewritten:
+                block_lines = [entry for entry in rewritten.splitlines() if entry.strip()]
+                if block_lines:
+                    pending_blocks.append((line_no, block_lines, numeric_rule_id, tooltip))
                 continue
-            if rule_id == 7:
-                partial_highlights.setdefault(line_no, []).append(rewritten.strip())
+
+            if numeric_rule_id in {6, 8, 9}:
+                rewritten_snippet = rewritten.strip()
+                if rewritten_snippet:
+                    pending_snippets.append((line_no, rewritten_snippet, numeric_rule_id, tooltip))
                 continue
-            if "\n" not in rewritten and "\n" not in original:
-                fragment = _changed_fragment(original, rewritten)
-                if fragment.strip():
-                    partial_highlights.setdefault(line_no, []).append(fragment)
-                    normalized_rewritten = rewritten.strip()
-                    if normalized_rewritten:
-                        snippet_tooltips.setdefault(normalized_rewritten, []).append((rule_id if isinstance(rule_id, int) else -1, tooltip))
-                        snippet_fragments.setdefault(normalized_rewritten, []).append(fragment)
-                    continue
-            visible_lines.add(line_no)
-            for rewritten_line in rewritten.splitlines():
-                normalized = rewritten_line.strip()
-                if normalized:
-                    snippet_tooltips.setdefault(normalized, []).append((rule_id if isinstance(rule_id, int) else -1, tooltip))
-        lines = rewritten_source.splitlines()
+
+            fragment = _changed_fragment(original, rewritten)
+            if fragment.strip():
+                pending_snippets.append((line_no, fragment, numeric_rule_id, tooltip))
+                continue
+
+            rewritten_line = rewritten.strip()
+            if rewritten_line:
+                pending_snippets.append((line_no, rewritten_line, numeric_rule_id, tooltip))
+
+        for preferred_line, block_lines, numeric_rule_id, tooltip in pending_blocks:
+            start_line = _find_nearest_block(lines, block_lines, preferred_line, used_block_ranges)
+            if start_line is None:
+                continue
+            end_line = start_line + len(block_lines) - 1
+            used_block_ranges.append((start_line, end_line))
+            for offset, block_line in enumerate(block_lines):
+                actual_line = start_line + offset
+                visible_lines.add(actual_line)
+                tooltip_map.setdefault(actual_line, []).append(tooltip)
+                if numeric_rule_id >= 0:
+                    line_rule_ids.setdefault(actual_line, set()).add(numeric_rule_id)
+                if block_line.strip():
+                    partial_highlights.setdefault(actual_line, []).append(block_line)
+
+        for preferred_line, snippet, numeric_rule_id, tooltip in pending_snippets:
+            target_line = preferred_line
+            if numeric_rule_id == 6:
+                if (
+                    target_line < 1
+                    or target_line > len(lines)
+                    or not _line_has_rule6_guard(lines[target_line - 1], snippet)
+                ):
+                    remapped = _find_nearest_line_rule6(lines, snippet, preferred_line, used_snippet_lines)
+                    if remapped is not None:
+                        target_line = remapped
+            elif target_line < 1 or target_line > len(lines) or snippet.strip() not in lines[target_line - 1]:
+                remapped = _find_nearest_line(lines, snippet, preferred_line, used_snippet_lines)
+                if remapped is not None:
+                    target_line = remapped
+            if target_line < 1 or target_line > len(lines):
+                continue
+            if numeric_rule_id == 6 and not _line_has_rule6_guard(lines[target_line - 1], snippet):
+                continue
+            if snippet.strip() and snippet.strip() not in lines[target_line - 1]:
+                continue
+            used_snippet_lines.add(target_line)
+            partial_highlights.setdefault(target_line, []).append(snippet)
+            tooltip_map.setdefault(target_line, []).append(tooltip)
+            if numeric_rule_id >= 0:
+                line_rule_ids.setdefault(target_line, set()).add(numeric_rule_id)
+
         split_generated_indexes = _split_generated_block_line_indexes(lines)
         for idx in split_generated_indexes:
             line_no = idx + 1
@@ -881,23 +974,6 @@ class HtmlCodeView(QTextBrowser):
             tooltip_map.setdefault(line_no, []).append(teleport_tooltip)
             line_rule_ids.setdefault(line_no, set()).add(11)
             visible_lines.add(line_no)
-
-        line_index = 0
-        while line_index < len(lines):
-            line = lines[line_index]
-            snippet = line.strip()
-            if snippet and snippet in snippet_tooltips:
-                matched_line = line_index + 1
-                fragments = [frag for frag in snippet_fragments.get(snippet, []) if frag.strip()]
-                if fragments:
-                    partial_highlights.setdefault(matched_line, []).extend(fragments)
-                else:
-                    visible_lines.add(matched_line)
-                for matched_rule_id, snippet_tooltip in snippet_tooltips[snippet]:
-                    tooltip_map.setdefault(matched_line, []).append(snippet_tooltip)
-                    if matched_rule_id >= 0:
-                        line_rule_ids.setdefault(matched_line, set()).add(matched_rule_id)
-            line_index += 1
 
         self._line_tooltips = {
             line_no: "\n".join(dict.fromkeys(messages))

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import app.pipeline as pipeline_module
 from app.pipeline import DEFAULT_RULES, RuleState, build_distributed_qasm, normalize_dqc_clicked_split_line, ordered_active_rule_ids, original_line_rule_matches, rewrite_and_analyze, rewrite_comments_and_blanks, split_generated_teleportations, split_points_from_source, substitute_inputs
+from tests._dqc_synthesis import synthesize_dqc_source_from_qasm
 
 
 class RewriteSpanTests(unittest.TestCase):
@@ -232,7 +233,6 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn("pragma dqc.v1.split id=1", result.rewritten_source)
         self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
-        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
         self.assertIsNotNone(result.circuit)
 
     def test_generic_pragma_does_not_break_circuit_preview(self) -> None:
@@ -254,7 +254,6 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn("pragma vendor.custom", result.rewritten_source)
         self.assertIsNotNone(result.circuit)
-        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
 
     def test_generic_pragma_does_not_break_runtime_execution(self) -> None:
         source = "\n".join([
@@ -277,7 +276,6 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIsNotNone(result.circuit)
         self.assertTrue(result.counts)
         self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
-        self.assertTrue(any("removed" in issue.message and "pragma" in issue.message for issue in result.issues))
 
     def test_bit_to_bool_cast_rewrites_scalar_and_array_element_conditions(self) -> None:
         source = "\n".join([
@@ -442,7 +440,8 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
 
     def test_qiskit_example_dqc_circuit_still_draws_with_rule8_active(self) -> None:
-        source = Path("qasm/split/qiskit-example/qiskit-example.dqc").read_text(encoding="utf-8")
+        qasm_source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
+        source, _ = synthesize_dqc_source_from_qasm(qasm_source, desired_points=2, seed=19)
         split_before_lines = split_points_from_source(source)
         rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
 
@@ -452,7 +451,8 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertFalse(any(issue.kind == "error" and "Runtime execution failed" in issue.message for issue in result.issues))
 
     def test_qiskit_example_dqc_preserves_split_dependencies_with_rule8_active(self) -> None:
-        source = Path("qasm/split/qiskit-example/qiskit-example.dqc").read_text(encoding="utf-8")
+        qasm_source = Path("qasm/qiskit-example.qasm").read_text(encoding="utf-8")
+        source, _ = synthesize_dqc_source_from_qasm(qasm_source, desired_points=2, seed=23)
         split_before_lines = split_points_from_source(source)
         rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.rule_id != 0) for rule in DEFAULT_RULES]
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, run_runtime_counts, suggest_split_points
+from app.pipeline import filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, run_runtime_counts, split_points_from_source, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
@@ -43,13 +43,13 @@ class PipelineRegressionTests(unittest.TestCase):
         )
 
         def fake_qiskit_parse(text: str):
-            self.assertNotIn("pragma", text.lower())
+            self.assertIn("pragma", text.lower())
             return {"parsed": True}
 
         _, removed_pragmas, fallback_events = parse_qiskit_with_pragma_resilience(fake_qiskit_parse, source)
 
-        self.assertGreater(removed_pragmas, 0)
-        self.assertIn("Pragma stripping (line-based)", fallback_events)
+        self.assertEqual(removed_pragmas, 0)
+        self.assertNotIn("Pragma stripping (line-based)", fallback_events)
 
     def test_split_guard_blocks_only_inner_scope_line(self) -> None:
         source = "\n".join(
@@ -83,6 +83,27 @@ class PipelineRegressionTests(unittest.TestCase):
 
         self.assertIn(5, suggested)
         self.assertIn("line", reason)
+
+    def test_blocked_split_points_are_filtered_from_inverseqft2_source(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "qubit[4] q;",
+                "bit c0;",
+                "h q[0];",
+                "measure q[0] -> c0;",
+                "if(c0 == 1) {",
+                "rz(pi / 2) q[1];",
+                "pragma dqc.v1.split id=1",
+                "}",
+                "h q[1];",
+            ]
+        )
+        raw_split_points = split_points_from_source(source)
+
+        self.assertTrue(raw_split_points)
+        self.assertEqual(filtered_split_points_from_source(source), set())
 
     def test_split_suggestion_respects_distributed_node_budget(self) -> None:
         source = "\n".join(
@@ -141,7 +162,7 @@ class PipelineRegressionTests(unittest.TestCase):
             ]
         )
 
-        counts, error, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
+        counts, error, _, _, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
 
         if error is not None:
             lowered = error.lower()
@@ -167,7 +188,7 @@ class PipelineRegressionTests(unittest.TestCase):
             ]
         )
 
-        counts, error, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
+        counts, error, _, _, _ = run_runtime_counts(source, parameter_bindings=None, shots=1)
 
         self.assertIsNone(error)
         self.assertIsNotNone(counts)

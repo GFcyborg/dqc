@@ -45,6 +45,7 @@ from .pipeline import (
     build_distributed_qasm,
     latest_versions_from_pypi,
     package_versions,
+    filtered_split_points_from_source,
     line_is_inside_blocking_scope,
     normalize_dqc_clicked_split_line,
     original_line_rule_matches,
@@ -1406,7 +1407,9 @@ already declared in the surrounding chunk code.</p>
         self.current_source = display_source
         self.split_points = split_points_from_source(display_source)
         analysis_source = self._split_save_source(display_source)
-        analysis_split_points = self.split_points.copy()
+        analysis_split_points = filtered_split_points_from_source(display_source)
+        if len(analysis_split_points) != len(self.split_points):
+            self._show_status_feedback("Ignored split pragmas inside blocked scopes.")
 
         active_rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.enabled) for rule in self.rules]
         needs_parameters = bool(scan_inputs(analysis_source)) and not self.parameter_bindings and not getattr(self, "_suppress_parameter_prompt", False)
@@ -1515,10 +1518,11 @@ already declared in the surrounding chunk code.</p>
             self.original_editor.setFocus()
 
     def _persist_split_artifacts(self) -> Path | None:
-        if not self.split_points:
+        active_split_points = filtered_split_points_from_source(self.current_source)
+        if not active_split_points:
             return None
         raw_source = self._split_save_source()
-        dqc_source, _ = build_distributed_qasm(raw_source, self.split_points)
+        dqc_source, _ = build_distributed_qasm(raw_source, active_split_points)
         target_dir = self.split_root / self.current_file.stem
         dqc_path = target_dir / f"{self.current_file.stem}.dqc"
         qasm_dump_path = target_dir / f"{self.current_file.stem}.dqc.qasm"

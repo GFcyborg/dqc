@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from app import main_window_clean
+from tests._dqc_synthesis import synthesize_dqc_file_from_qasm
 
 
 class _NeverDoneFuture:
@@ -86,19 +88,28 @@ class CircuitZoomTimeoutRegressionTests(unittest.TestCase):
             self.assertGreater(after_success_zoom, before_success_zoom)
 
             # Regression targets reported as non-timeout but frozen for zoom-in.
-            for relative in (
-                Path("qasm/split/deutsch-jozsa/deutsch-jozsa.dqc"),
-                Path("qasm/split/qft/qft.dqc"),
-            ):
-                target = workspace_root / relative
-                self.assertTrue(target.exists())
-                window.load_file(target)
-                for _ in range(15):
-                    app.processEvents()
-                before_zoom = float(view.transform().m11())
-                view.zoom(1)
-                after_zoom = float(view.transform().m11())
-                self.assertGreater(after_zoom, before_zoom)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                generated_targets = []
+                for relative_qasm, seed in (
+                    (Path("qasm/deutsch-jozsa.qasm"), 31),
+                    (Path("qasm/qft.qasm"), 37),
+                ):
+                    target, _ = synthesize_dqc_file_from_qasm(
+                        workspace_root / relative_qasm,
+                        Path(temp_dir),
+                        desired_points=2,
+                        seed=seed,
+                    )
+                    generated_targets.append(target)
+
+                for target in generated_targets:
+                    window.load_file(target)
+                    for _ in range(15):
+                        app.processEvents()
+                    before_zoom = float(view.transform().m11())
+                    view.zoom(1)
+                    after_zoom = float(view.transform().m11())
+                    self.assertGreater(after_zoom, before_zoom)
         finally:
             window.close()
             main_window_clean.MainWindow._start_runtime_run = original_start_runtime_run

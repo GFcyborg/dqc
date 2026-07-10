@@ -55,17 +55,19 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 window.split_root = Path(temp_dir)
                 window.current_file = workspace_root / "qasm" / "bell_state.qasm"
-                window.split_points = {4}
-                window.original_editor.setPlainText(
-                    "\n".join(
-                        [
-                            "OPENQASM 3.1;",
-                            'include "stdgates.inc";',
-                            "qubit[2] q;",
-                            "h q[0];",
-                        ]
-                    )
+                raw_with_split = "\n".join(
+                    [
+                        "OPENQASM 3.1;",
+                        'include "stdgates.inc";',
+                        "qubit[2] q;",
+                        "h q[0];",
+                        "pragma dqc.v1.split id=1",
+                        "h q[1];",
+                    ]
                 )
+                window.current_source = raw_with_split
+                window.original_editor.setPlainText(raw_with_split)
+                window.split_points = {5}
                 rewritten_with_marker = "\n".join(
                     [
                         "OPENQASM 3.1;",
@@ -115,17 +117,19 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 window.split_root = Path(temp_dir)
                 window.current_file = workspace_root / "qasm" / "bell_state.qasm"
-                window.split_points = {4}
-                window.original_editor.setPlainText(
-                    "\n".join(
-                        [
-                            "OPENQASM 3.1;",
-                            'include "stdgates.inc";',
-                            "qubit[2] q;",
-                            "h q[0];",
-                        ]
-                    )
+                raw_with_split = "\n".join(
+                    [
+                        "OPENQASM 3.1;",
+                        'include "stdgates.inc";',
+                        "qubit[2] q;",
+                        "h q[0];",
+                        "pragma dqc.v1.split id=1",
+                        "h q[1];",
+                    ]
                 )
+                window.current_source = raw_with_split
+                window.original_editor.setPlainText(raw_with_split)
+                window.split_points = {5}
                 window._latest_result = SimpleNamespace(
                     rewritten_source="\n".join(
                         [
@@ -162,17 +166,19 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 window.split_root = Path(temp_dir)
                 window.current_file = workspace_root / "qasm" / "bell_state.qasm"
-                window.split_points = {4}
-                window.original_editor.setPlainText(
-                    "\n".join(
-                        [
-                            "OPENQASM 3.1;",
-                            'include "stdgates.inc";',
-                            "qubit[2] q;",
-                            "h q[0];",
-                        ]
-                    )
+                raw_with_split = "\n".join(
+                    [
+                        "OPENQASM 3.1;",
+                        'include "stdgates.inc";',
+                        "qubit[2] q;",
+                        "h q[0];",
+                        "pragma dqc.v1.split id=1",
+                        "h q[1];",
+                    ]
                 )
+                window.current_source = raw_with_split
+                window.original_editor.setPlainText(raw_with_split)
+                window.split_points = {5}
                 window._latest_result = SimpleNamespace(
                     rewritten_source="\n".join(
                         [

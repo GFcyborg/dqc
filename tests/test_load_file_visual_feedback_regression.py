@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from PySide6.QtWidgets import QApplication
 
 from app import main_window_clean
+from tests._dqc_synthesis import synthesize_dqc_file_from_qasm
 
 
 class LoadFileVisualFeedbackRegressionTests(unittest.TestCase):
@@ -334,54 +336,58 @@ class LoadFileVisualFeedbackRegressionTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
 
         workspace_root = Path(__file__).resolve().parents[1]
-        dqc_candidates = sorted((workspace_root / "qasm").rglob("*.dqc"))
-        self.assertTrue(dqc_candidates)
-        dqc_file = dqc_candidates[0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dqc_file, _ = synthesize_dqc_file_from_qasm(
+                workspace_root / "qasm" / "bell_state.qasm",
+                Path(temp_dir),
+                desired_points=1,
+                seed=41,
+            )
 
-        original_scan_inputs = main_window_clean.scan_inputs
-        original_exec = main_window_clean.ParameterDialog.exec
-        original_values = main_window_clean.ParameterDialog.values
-        original_start_runtime_run = main_window_clean.MainWindow._start_runtime_run
+            original_scan_inputs = main_window_clean.scan_inputs
+            original_exec = main_window_clean.ParameterDialog.exec
+            original_values = main_window_clean.ParameterDialog.values
+            original_start_runtime_run = main_window_clean.MainWindow._start_runtime_run
 
-        captured = {"visible_at_start": False, "called": 0}
+            captured = {"visible_at_start": False, "called": 0}
 
-        def _fake_scan_inputs(source: str):  # noqa: ANN001
-            # Force prompt path for .dqc load; after dialog acceptance,
-            # runtime still starts because parameter_bindings becomes non-empty.
-            if "pragma dqc.v1.split" in source:
-                return ["a"]
-            return []
+            def _fake_scan_inputs(source: str):  # noqa: ANN001
+                # Force prompt path for .dqc load; after dialog acceptance,
+                # runtime still starts because parameter_bindings becomes non-empty.
+                if "pragma dqc.v1.split" in source:
+                    return ["a"]
+                return []
 
-        def _fake_exec(self) -> int:  # noqa: ANN001
-            return main_window_clean.QDialog.DialogCode.Accepted
+            def _fake_exec(self) -> int:  # noqa: ANN001
+                return main_window_clean.QDialog.DialogCode.Accepted
 
-        def _fake_values(self) -> dict[str, str]:  # noqa: ANN001
-            return {"a": "0.5"}
+            def _fake_values(self) -> dict[str, str]:  # noqa: ANN001
+                return {"a": "0.5"}
 
-        def _fake_start_runtime_run(self, result, preferred_backend="MPS", retry_attempted=False):  # noqa: ANN001
-            captured["called"] += 1
-            captured["visible_at_start"] = bool(self._runtime_stopwatch_label.isVisible())
-            return None
+            def _fake_start_runtime_run(self, result, preferred_backend="MPS", retry_attempted=False):  # noqa: ANN001
+                captured["called"] += 1
+                captured["visible_at_start"] = bool(self._runtime_stopwatch_label.isVisible())
+                return None
 
-        main_window_clean.scan_inputs = _fake_scan_inputs
-        main_window_clean.ParameterDialog.exec = _fake_exec
-        main_window_clean.ParameterDialog.values = _fake_values
-        main_window_clean.MainWindow._start_runtime_run = _fake_start_runtime_run
+            main_window_clean.scan_inputs = _fake_scan_inputs
+            main_window_clean.ParameterDialog.exec = _fake_exec
+            main_window_clean.ParameterDialog.values = _fake_values
+            main_window_clean.MainWindow._start_runtime_run = _fake_start_runtime_run
 
-        window = main_window_clean.MainWindow(workspace_root)
-        try:
-            window.load_file(dqc_file)
-            for _ in range(20):
-                app.processEvents()
+            window = main_window_clean.MainWindow(workspace_root)
+            try:
+                window.load_file(dqc_file)
+                for _ in range(20):
+                    app.processEvents()
 
-            self.assertGreaterEqual(captured["called"], 1)
-            self.assertTrue(captured["visible_at_start"])
-        finally:
-            window.close()
-            main_window_clean.scan_inputs = original_scan_inputs
-            main_window_clean.ParameterDialog.exec = original_exec
-            main_window_clean.ParameterDialog.values = original_values
-            main_window_clean.MainWindow._start_runtime_run = original_start_runtime_run
+                self.assertGreaterEqual(captured["called"], 1)
+                self.assertTrue(captured["visible_at_start"])
+            finally:
+                window.close()
+                main_window_clean.scan_inputs = original_scan_inputs
+                main_window_clean.ParameterDialog.exec = original_exec
+                main_window_clean.ParameterDialog.values = original_values
+                main_window_clean.MainWindow._start_runtime_run = original_start_runtime_run
 
 
 if __name__ == "__main__":

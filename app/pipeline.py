@@ -288,7 +288,7 @@ def line_is_inside_blocking_scope(source: str, line: int) -> bool:
             continue
         start = int(getattr(s, "start_line", 0) or 0)
         end = int(getattr(s, "end_line", 0) or 0)
-        if start <= line < end:
+        if start <= line <= end:
             return True
     return False
 
@@ -1517,6 +1517,12 @@ def split_points_from_source(text: str) -> set[int]:
     return split_points
 
 
+def filtered_split_points_from_source(text: str) -> set[int]:
+    split_points = split_points_from_source(text)
+    analysis_source = "\n".join(line for line in text.splitlines() if not DQC_PRAGMA_PATTERN.match(line))
+    return {line for line in split_points if not line_is_inside_blocking_scope(analysis_source, line)}
+
+
 def normalize_dqc_clicked_split_line(source_text: str, clicked_line: int) -> int:
     pragma_lines = split_pragma_line_numbers(source_text)
     if clicked_line in pragma_lines:
@@ -2490,6 +2496,8 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     circuit_result = None
     counts: dict[str, int] = {}
     duration_s = 0.0
+    runtime_backend = ""
+    runtime_note = ""
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
 
@@ -2514,7 +2522,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
         if execute_runtime:
             start = time.perf_counter()
             compiled = _compile_for_aer_runtime(circuit_result)
-            counts = _run_aer_counts_with_fallback(compiled, shots)
+            counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots)
             duration_s = time.perf_counter() - start
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"Runtime execution failed: {exc}", kind="error"))
@@ -2526,7 +2534,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     split_qasm_lines = rewrite_comment_out_pragmas(split_qasm_lines, spans)
     final_split_qasm = strip_internal_display_markers("\n".join(split_qasm_lines))
     
-    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=final_split_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set))
+    return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=final_split_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set), runtime_backend=runtime_backend, runtime_note=runtime_note)
 
 
 def build_ast_graph(parse_tree: Any) -> nx.DiGraph:

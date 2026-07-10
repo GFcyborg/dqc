@@ -1148,8 +1148,38 @@ make sure split pragmas expansions (by rule #11) do not drift: this is a big ris
 More in general, the line-number book-keeping is too brittle, in a context of a lot of rewriting rules possibly cross-interfering. Can it be made more robust?
 2026.07.10-12.56
 ---------------------------------------------
+The inner-scope anti-split guard is working well most of the times, but not always: a split pragma has been allowed inside the inner-scope of an if-block in inverseqft2.dqc
+2026.07.10-16.44
+---------------------------------------------
+Do you create tests relying on the presence of *.dqc files on the storage? this would not be a good assumption, since those *.dqc files always change; they depend heavily on the rule implementation that forged them, therefore I often delete them manually in order to clear the leftovers from previous/buggy implementations.
+You can create tests relying on the presence of the *.qasm files (they are stable), but not on the *.dqc files (nor their dumps *.dqc.qasm , which also depend on current custom rule selection). If you need to test against *.dqc files, you should build them on-the-fly, starting from a *.qasm file, then injecting a couple of random split points (always with the inner-scope anti-split guard), and then applying all rewriting rules (except rule #0, which is a bypass); this way you can create an up-to-date *.dqc file, according to latest rules implementation.
+Check if you have tests using specific *.dqc files, and fix them as I just said.
+Do a final pass of all tests, but don't get stuck (set a timeout!).
+2026.07.10-17.44
+---------------------------------------------
+Current failing tests from full pass are in:
+    test_pipeline_regressions.py
+    test_rewrite_spans.py
+    test_save_split_dump_regression.py
+These failures are unrelated to .dqc fixture dependence and are about existing runtime/fallback and save-guard expectations. If you want, I can do a dedicated follow-up pass to reconcile those assertions with current runtime/save behavior.
 
-
+yes, do it.
+2026.07.10-17.51
+---------------------------------------------
+Green coloring of some Rewritten code is sometimes offset/misplaced. Here you have some cases:
+- rule #6 (bit to boolean) colors teleport.qasm lines #18-19 ("c0", "c1"), instead of lines #20-21 ("c0", "c1");
+- rule #10 (unfold bcasts) colors qft.qasm line #16 ("cphase(pi / 4) q[3], q[1];"), for no reason (no rewrite);
+- rule #6 (it to boolean) colors inverseqft2.qasm line #21 ("c2"), instead of lines #18-19, #22-24 ("c0==1" and similar);
+- rule #10 (unfold bcasts) correctly expands adder.qasm line #29, but then one expansion ("reset b[1];") is colored in white (unlike the others expanded, which are correctly in green), and that line is also the only one (of that expansion) having also a tooltip with rule #7 (uint loop unroll), instead of line #33;
+- rule #10 (unfold bcasts) colors qiskit-example.qasm lines #38-39 ("reset q[0];" and "reset q[1];") for no reason (no rewrite), probably because the rule #10 is considering every reset as a broadcast: this makes no harm, but it's not needed when broadcast operators are applied to 1 single qubit, like in that case;
+2026.07.10-19.21
+---------------------------------------------
+rule #6 (bit to boolean) should minimize the green-coloring to the string that is actually rewritten (usually the conditional guard), not color the whole if-block, e.g.: inverseqft2.qasm line #18-19.
+2026.07.10-19.39
+---------------------------------------------
+You can reduce even more rule #6 (bit to boolean) green-coloring to the strict content of the parentheses, so for example: not all the "if(c0)", but only "c0" should be green.
+2026.07.10-19.51
+---------------------------------------------
 
 
 
@@ -1185,78 +1215,10 @@ let q1-to3 = q1_epr_TARGET_2 ;
 
 2026.07.07-13.48
 ---------------------------------------------
-rule #0 (bypass all other rules) works towards the circuit, but does not work towards the runtime (after bypassing all, I can still see the split-gen. teleportation qubits in the runtime output). 
-2026.07.07-16.46
----------------------------------------------
 ...
-[answer:
-The attempt exposed a real blocker outside pragma filtering: rule #11 sometimes emits qiskit-invalid code, and the old fallback was masking it. I’m reverting the unification experiment back to the last stable pragma behavior while keeping the safe counts fix, so the codebase stays working and I can give you a precise feasibility answer.
-Yes, your goal is clear. Fully feasible as stated: not without changing rule #11. Why it breaks:
-I tried the exact unification you described: one final visible pragma-comment safeguard, no hidden pragma stripping. That works for generic pragmas.
-It fails on some split cases, specifically test_rewrite_spans.py:442 / qiskit-example.dqc, because rule #11 can emit teleport blocks in places where qiskit rejects them with qubit declarations must be global.
-The old hidden pragma fallback was masking that by letting qiskit parse an alternate source path that still had split pragmas instead of the injected teleport declarations.
-So the real blocker is not pragma handling anymore. It is rule #11 output shape versus qiskit importer constraints.
-Natural next steps:
-    Keep the current stable split fallback behavior for now, and postpone unification until rule #11 is fixed.
-    Do a focused pass on rule #11 so its injected declarations are always global, then remove the hidden pragma fallback.
-    Map exactly which split placements can make rule #11 emit qiskit-invalid local declarations, so the required rule #11 change is minimal.
-]
----------------------------------------------
-Do option 3: Map exactly which split placements can make rule #11 emit qiskit-invalid local declarations, so the required rule #11 change is minimal.
-2026.07.07-19.12
 
-[answer:
-The smallest change is probably not a big rule #11 rewrite.
-It is to make rule #11 inject into the same pragma-stripped line space that split points are computed in.
-Concretely, the risky asymmetry is:
-    dqc_source built from rewritten_no_pragmas
-    teleport display/output built from rewritten_source
-That is why split id=2 in qiskit-example.dqc:47 drifts onto qiskit-example.dqc:46.
-A good regression anchor for the eventual fix is test_rewrite_spans.py:442.
-If you want, I can next turn this map into one focused regression test that asserts “second split after a closed scope must inject after the scope, never before the closing brace.”
-]
----------------------------------------------
-Your explaination is overcomplicating things: rule #11 emits qiskit-invalid local declarations because there is a line-number drift (when translating split pragmas into split-gen.teleportations), and this drift accidentally gets into a scope, making teleport-qubit declarations local (which is illegal).
-I say: everything will be fine if you fix that line drift! There should be no drift!
-If current rule #11 has a problem of line drift, it should be fixed (and tested).
-Then we can look again at how to unify pragma filtering.
-2026.07.07-19.35
----------------------------------------------
-your fix of line drift for rule #11 (split-gen.teleports) is not working: when the pragma is placed right after a inner scope end "}", its teleportations get injected inside the inner scope.
-Fix it.
-2026.07.07-19.44
-
-[answer:
-I switched split-gen teleport insertion from line-number matching to marker-anchored insertion in pipeline.py:1554 -> build_distributed_qasm().
-]
----------------------------------------------
-I like the idea of split markers (instead of line numbers), but it must improved. Now it's not working well (the expansion gets misplaced).
-2026.07.07-21.05
----------------------------------------------
-Still misplaced expansions. And the inner-scope anti-split guard is not working anymore.
-2026.07.07-21.30
----------------------------------------------
-The inner-scope anti-split guard is working again now, but the split-gen teleports still get injected in the wrong place sometimes: look at the 2 *.dqc files, the split pragma expansion by rule #11 works well in qiskit-example.dqc (where the inner-scopes are a while-loop and an if-body), but it fails in adder.dqc (where the inner-scope is a for-loop): the strange thing is, adder.dqc is wrong in the Rewritten view, but it's correct in its adder.dqc.qasm file (which in theory should match the Rewritten code).
-Fix rule #11 where it fails, but also make sure the *.dqc.qasm files always match what the Rewritten code view (because *.dqc.qasm files are exactly this: a dump of *.dqc files transpiling, under the user-selected rules).
-Also: create a test about it.
-2026.07.08-11.03
----------------------------------------------
-If you want, I can now run the full test suite and report only any new failures introduced by these changes.
-
-Yes, do it. Test it all.
-2026.07.08-11.15
----------------------------------------------
-If you want, I can now patch these 4 failures so the full suite is green in this repository state (adjust stale file assumptions and update the run_runtime_counts unpacking tests).
-
-Yes, fix them all.
-2026.07.08-11.17 stuck+aborted
-2026.07.08-11.37 stuck+aborted
----------------------------------------------
 I asked for a full test run, and it got stuck twice: I had to abort it and revert/restore checkpoint.
-I've noticed that you create tests relying on the presence of *.dqc files on the storage: this is not a good assumption, since those files always change; they depend eavily on the rule implementation that forged them, so I often delete them in order to clear the leftover from previous/buggy implementations.
-You can create tests relying on the presence of the *.qasm files (they are stable), but not on the on-storage *.dqc files (nor their dumps: *.dqc.qasm). If you need to test against *.dqc files, you should start from a *.qasm file, then inject a couple of random split points (always with the inner-scope anti-split guard), and then applying all rewriting rules (except rule #0, which is a bypass); this way you can create an always up-to-date *.dqc file, according to latest rules implementation.
-Check if you still have tests using specific *.dqc files, and fix them as I just said.
-Do a final pass of all tests, but don't get stuck (set a timeout!).
+...
 2026.07.08-11.42
 ---------------------------------------------
 green coloring and rule-tooltip of Rewritten code are wrong on adder.qasm lines #28-29.
