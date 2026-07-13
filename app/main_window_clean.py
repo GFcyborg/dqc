@@ -848,9 +848,10 @@ class MainWindow(QMainWindow):
                  "Local EPR qubit allocated for entanglement.  "
                  "Renamed to <code>{qubit}_epr_{split_id}</code> to avoid name collisions "
                  "when multiple split points are present."),
-                ("q_epr_TARGET",
+                ("q_TO",
                  "Remote EPR qubit (the entangled partner received by the next chunk).  "
-                 "Renamed to <code>{qubit}_epr_TARGET_{split_id}</code>."),
+                 "Renamed to <code>{qubit}_TO{next_chunk}</code>, where "
+                 "<code>next_chunk = split_id + 1</code>."),
                 ("telept_Zcorrect_q",
                  "Classical bit holding the Z-basis measurement result used for correction.  "
                  "Renamed to <code>telept_Zcorrect_{qubit}_{split_id}</code>."),
@@ -902,13 +903,13 @@ already declared in the surrounding chunk code.</p>
 <p>For a dependency qubit named <code>w</code> at split&nbsp;<code>N</code>:</p>
 <ul>
   <li><code>q_epr</code> &rarr; <code>w_epr_N</code></li>
-  <li><code>q_epr_TARGET</code> &rarr; <code>w_epr_TARGET_N</code></li>
+    <li><code>q_TO</code> &rarr; <code>w_TO(N+1)</code></li>
   <li><code>telept_Zcorrect_q</code> &rarr; <code>telept_Zcorrect_w_N</code></li>
   <li><code>telept_Xcorrect_q</code> &rarr; <code>telept_Xcorrect_w_N</code></li>
   <li><code>q_SOURCE</code> &rarr; <code>w</code>&nbsp;(the actual qubit name)</li>
 </ul>
 <p>For an array element such as <code>w[1]</code> the brackets are stripped:
-<code>w1_epr_N</code>, <code>telept_Zcorrect_w1_N</code>, etc.</p>
+<code>w1_epr_N</code>, <code>w1_TO(N+1)</code>, <code>telept_Zcorrect_w1_N</code>, etc.</p>
 
 <h3>Current template status</h3>
 {status_html}

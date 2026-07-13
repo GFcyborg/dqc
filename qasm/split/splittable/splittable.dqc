@@ -28,6 +28,7 @@ h q[2];
 if (c_bell[1]) {
     x q[2];
 }
+pragma dqc.v1.split id=1
 
 if (c_bell[0]) {
     z q[2];
@@ -40,9 +41,10 @@ reset q[3];
 
 h q[3];
 z q[3];
+pragma dqc.v1.split id=2
 h q[3];
 z q[3];
 h q[3];
-pragma dqc.v1.split id=1
+pragma dqc.v1.split id=3
 
 c_ind[0] = measure q[3];

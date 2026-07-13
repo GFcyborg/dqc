@@ -9,8 +9,9 @@ gate cphase(θ) a, b
 pragma dqc.v1.split id=1
 
 qubit[2] q;
+pragma dqc.v1.split id=2
 bit[2] c;
 cphase(π / 2) q[0], q[1];
-pragma dqc.v1.split id=2
+pragma dqc.v1.split id=3
 
 c = measure q;

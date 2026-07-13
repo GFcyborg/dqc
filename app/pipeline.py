@@ -121,7 +121,7 @@ QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS: tuple[str, ...] = (
     "q_SOURCE",           # source qubit placeholder – declaration is removed;
                           #   all remaining uses are replaced with the actual qubit name
     "q_epr",              # local EPR qubit       → renamed to {qubit}_epr_{split_id}
-    "q_epr_TARGET",       # remote EPR target     → renamed to {qubit}_epr_TARGET_{split_id}
+    "q_TO",               # remote target qubit   → renamed to {qubit}_TO{next_chunk_index}
     "telept_Zcorrect_q",  # Z-correction cbit     → renamed to telept_Zcorrect_{qubit}_{split_id}
     "telept_Xcorrect_q",  # X-correction cbit     → renamed to telept_Xcorrect_{qubit}_{split_id}
 )
@@ -1378,10 +1378,15 @@ def _source_qubit_token(source_qubit: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "", normalized)
 
 
-def _suffix_template_symbol_names(template_lines: list[str], split_id: int, source_qubit: str) -> list[str]:
+def _suffix_template_symbol_names(
+    template_lines: list[str],
+    split_id: int,
+    next_chunk_index: int,
+    source_qubit: str,
+) -> list[str]:
     token = _source_qubit_token(source_qubit)
     replacements = {
-        "q_epr_TARGET": f"{token}_epr_TARGET_{split_id}",
+        "q_TO": f"{token}_TO{next_chunk_index}",
         "q_epr": f"{token}_epr_{split_id}",
         "telept_Zcorrect_q": f"telept_Zcorrect_{token}_{split_id}",
         "telept_Xcorrect_q": f"telept_Xcorrect_{token}_{split_id}",
@@ -1393,8 +1398,13 @@ def _suffix_template_symbol_names(template_lines: list[str], split_id: int, sour
     return rewritten_lines
 
 
-def _adapt_template_for_dependency(template_lines: list[str], split_id: int, source_qubit: str) -> list[str]:
-    rewritten_lines = _suffix_template_symbol_names(template_lines, split_id, source_qubit)
+def _adapt_template_for_dependency(
+    template_lines: list[str],
+    split_id: int,
+    next_chunk_index: int,
+    source_qubit: str,
+) -> list[str]:
+    rewritten_lines = _suffix_template_symbol_names(template_lines, split_id, next_chunk_index, source_qubit)
     output: list[str] = []
     source_symbol_pattern = re.compile(r"\bq_SOURCE\b")
     for line in rewritten_lines:
@@ -1451,7 +1461,12 @@ def split_generated_teleportations(
             )
         template_lines = template_text.splitlines()
         for dependency_name in dependency_names:
-            adapted = _adapt_template_for_dependency(template_lines, split_id, dependency_name.strip())
+            adapted = _adapt_template_for_dependency(
+                template_lines,
+                split_id,
+                next_chunk_index,
+                dependency_name.strip(),
+            )
             lines.extend(adapted)
     if for_display:
         lines.append(DQC_TELEPORT_BLOCK_END_SENTINEL)

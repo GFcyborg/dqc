@@ -94,20 +94,20 @@ class TestValidateQcommTemplate(unittest.TestCase):
             f"Expected a source-decl error, got: {errors}",
         )
 
-    def test_missing_q_epr_target_is_reported(self) -> None:
-        text = _load_template().replace("q_epr_TARGET", "q_epr_DEST")
+    def test_missing_q_to_is_reported(self) -> None:
+        text = _load_template().replace("q_TO", "q_DEST")
         errors = validate_qcomm_template(text)
         self.assertTrue(
-            any("q_epr_TARGET" in e for e in errors),
-            f"Expected q_epr_TARGET error, got: {errors}",
+            any("q_TO" in e for e in errors),
+            f"Expected q_TO error, got: {errors}",
         )
 
     def test_missing_q_epr_is_reported(self) -> None:
-        # Replace q_epr (but not q_epr_TARGET) so only q_epr is missing.
+        # Replace q_epr (but not q_TO) so only q_epr is missing.
         text = re.sub(r"\bq_epr\b", "q_entangle", _load_template())
         errors = validate_qcomm_template(text)
         self.assertTrue(
-            any("q_epr" in e and "q_epr_TARGET" not in e for e in errors),
+            any("q_epr" in e and "q_TO" not in e for e in errors),
             f"Expected q_epr error, got: {errors}",
         )
 
@@ -139,14 +139,14 @@ class TestValidateQcommTemplate(unittest.TestCase):
 
 class TestSuffixTemplateSymbolNames(unittest.TestCase):
     def _adapt(self, source_qubit: str, split_id: int) -> list[str]:
-        return _suffix_template_symbol_names(_template_lines(), split_id, source_qubit)
+        return _suffix_template_symbol_names(_template_lines(), split_id, split_id + 1, source_qubit)
 
-    def test_q_epr_target_renamed(self) -> None:
+    def test_q_to_renamed_with_next_chunk_suffix(self) -> None:
         adapted = self._adapt("w", 3)
         joined = "\n".join(adapted)
-        self.assertIn("w_epr_TARGET_3", joined)
+        self.assertIn("w_TO4", joined)
         # Original token must be gone
-        self.assertNotIn("q_epr_TARGET", joined)
+        self.assertNotIn("q_TO", joined)
 
     def test_q_epr_renamed(self) -> None:
         adapted = self._adapt("w", 3)
@@ -185,7 +185,7 @@ class TestSuffixTemplateSymbolNames(unittest.TestCase):
 
 class TestAdaptTemplateForDependency(unittest.TestCase):
     def _adapt(self, source_qubit: str, split_id: int) -> list[str]:
-        return _adapt_template_for_dependency(_template_lines(), split_id, source_qubit)
+        return _adapt_template_for_dependency(_template_lines(), split_id, split_id + 1, source_qubit)
 
     def test_source_decl_line_removed(self) -> None:
         adapted = self._adapt("myq", 1)
@@ -206,7 +206,7 @@ class TestAdaptTemplateForDependency(unittest.TestCase):
         joined = "\n".join(adapted)
         # EPR and classical bits derive from the source name
         self.assertIn("anc_epr_2", joined)
-        self.assertIn("anc_epr_TARGET_2", joined)
+        self.assertIn("anc_TO3", joined)
         self.assertIn("telept_Zcorrect_anc_2", joined)
         self.assertIn("telept_Xcorrect_anc_2", joined)
 
@@ -216,6 +216,7 @@ class TestAdaptTemplateForDependency(unittest.TestCase):
         adapted = self._adapt("q0", 5)
         joined = "\n".join(adapted)
         self.assertIn("q0_epr_5", joined)
+        self.assertIn("q0_TO6", joined)
         self.assertIn("telept_Zcorrect_q0_5", joined)
 
     def test_output_is_non_empty_valid_qasm_lines(self) -> None:
@@ -232,8 +233,8 @@ class TestAdaptTemplateForDependency(unittest.TestCase):
                 )
 
     def test_multiple_split_points_no_name_collision(self) -> None:
-        a = set(_adapt_template_for_dependency(_template_lines(), 1, "q"))
-        b = set(_adapt_template_for_dependency(_template_lines(), 2, "q"))
+        a = set(_adapt_template_for_dependency(_template_lines(), 1, 2, "q"))
+        b = set(_adapt_template_for_dependency(_template_lines(), 2, 3, "q"))
         # The adapted lines for different split IDs must be disjoint (different names)
         # except for lines that do not contain any mangled identifier.
         mangled_a = {ln for ln in a if "_1" in ln}

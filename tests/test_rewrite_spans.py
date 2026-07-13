@@ -695,8 +695,8 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertNotIn("qubit q_SOURCE", rewritten)
         self.assertIn("qubit anc0_epr_1;", rewritten)
         self.assertIn("qubit q0_epr_2;", rewritten)
-        self.assertIn("qubit anc0_epr_TARGET_1;", rewritten)
-        self.assertIn("qubit q0_epr_TARGET_2;", rewritten)
+        self.assertIn("qubit anc0_TO2;", rewritten)
+        self.assertIn("qubit q0_TO3;", rewritten)
         self.assertIn("bit telept_Zcorrect_anc0_1;", rewritten)
         self.assertIn("bit telept_Zcorrect_q0_2;", rewritten)
         self.assertIn("bit telept_Xcorrect_anc0_1;", rewritten)
@@ -727,7 +727,7 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("cx q[0], q0_epr_3;", rendered)
         self.assertIn("cx q[1], q1_epr_3;", rendered)
         self.assertIn("cx q[2], q2_epr_3;", rendered)
-        self.assertIn("qubit q0_epr_TARGET_3;", rendered)
+        self.assertIn("qubit q0_TO4;", rendered)
         self.assertIn("bit telept_Zcorrect_q0_3;", rendered)
         self.assertNotIn("qubit q_SOURCE", rendered)
 
@@ -758,7 +758,7 @@ class RewriteSpanTests(unittest.TestCase):
 
         self.assertIn("* a[0] from chunks 1, 2", rendered)
         self.assertEqual(rendered.count("qubit a0_epr_2;"), 1)
-        self.assertEqual(rendered.count("qubit a0_epr_TARGET_2;"), 1)
+        self.assertEqual(rendered.count("qubit a0_TO3;"), 1)
         self.assertEqual(rendered.count("bit telept_Zcorrect_a0_2;"), 1)
         self.assertEqual(rendered.count("bit telept_Xcorrect_a0_2;"), 1)
         self.assertEqual(rendered.count("cx a[0], a0_epr_2;"), 1)

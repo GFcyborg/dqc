@@ -26,7 +26,7 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
                     " */",
                     "cx q[0], q0_epr_1;",
                     "// <dqc:teleport-end>",
-                    "x q0_epr_TARGET_1;",
+                    "x q0_TO2;",
                 ]
             )
             window._latest_result = SimpleNamespace(rewritten_source=raw_with_marker)
@@ -34,7 +34,7 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             cleaned = window.rewritten_text()
             self.assertFalse(main_window_clean.contains_internal_display_markers(cleaned))
             self.assertIn("cx q[0], q0_epr_1;", cleaned)
-            self.assertIn("x q0_epr_TARGET_1;", cleaned)
+            self.assertIn("x q0_TO2;", cleaned)
         finally:
             window.close()
             app.processEvents()

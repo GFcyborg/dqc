@@ -1180,8 +1180,9 @@ rule #6 (bit to boolean) should minimize the green-coloring to the string that i
 You can reduce even more rule #6 (bit to boolean) green-coloring to the strict content of the parentheses, so for example: not all the "if(c0)", but only "c0" should be green.
 2026.07.10-19.51
 ---------------------------------------------
-
-
+I want to change q-comm_template.qasm so that the target qubit has a shorter name, like "q_TO" (instead of "q_epr_TARGET").You should adapt the qasm template and make sure that the app logic of rule #11 (split-gen.teleports) changes its patterns accordingly. After changing template and app logic, the new rule#11-injected teleports targets should result in q_TO<N+1> , instead of current q_epr_TARGET_<N> ; this change of the suffix, from current N, to the new N+1, can be explained by observing that current N is referring to split-id#, while the new N+1 is referring to next chunk# (that is immediately following that split), so for example: split-id #1 will teleport qubits into chunk #2. So it makes sense to call that teleportation target-qubit "q_TO2", because it's being ported to chunk #2.
+2026.07.13-20.15
+---------------------------------------------
 
 
 ================ TO REPLAY?
