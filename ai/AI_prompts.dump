@@ -1185,61 +1185,8 @@ I want to change q-comm_template.qasm so that the target qubit has a shorter nam
 ---------------------------------------------
 
 
-================ TO REPLAY?
-rule #11 (split-gen.teleports) update: at the end of each block of teleportations, before continuing with the code of the next chunk, inject the shortened aliases of all teleported qubits, e.g.:
-
-[chunk#1 code]
-/* Teleporting qubits into chunk 2:
- * q[0] from chunk 1
- * q[1] from chunk 1
- */
-...
-// q[0] teleported into q0_epr_TARGET_1
-...
-// q[1] teleported into q1_epr_TARGET_1
-let q0-to2 = q0_epr_TARGET_1 ;
-let q1-to2 = q1_epr_TARGET_1 ;
-// ---------------------------
-[chunk#2 code]
-/* Teleporting qubits into chunk 3:
- * q[0] from chunk 2
- * q[1] from chunk 2
- */
-...
-// q[0] teleported into q0_epr_TARGET_2
-...
-// q[1] teleported into q1_epr_TARGET_2
-let q0-to3 = q0_epr_TARGET_2 ;
-let q1-to3 = q1_epr_TARGET_2 ;
-// ---------------------------
-[chunk#3 code]
-
-2026.07.07-13.48
----------------------------------------------
-I saw many bugs related to the fact that the app uses line numbers as a base for rewriting rules logic, but line numbers are very unstable (they continously change), so they cause off-by-one errors and cross-rule interference/drift (on top of a lot of line-number book-keeping). Maybe there is a better way of marking rule-specific insertion-points, so that they gracefully move with the text, when many rules interact.
-2026.07.08-12.16
----------------------------------------------
-If you want, I can next extend the same anchor/span strategy from split insertion to other rewrite-sensitive operations (for example, rule-specific highlight spans) so rule coloring/tooltips also become less line-fragile.
-
-yes, do it.
-2026.07.08-12.21
----------------------------------------------
-I see some of the rules do not get applied all the times: each rule should have its own test to guard it.
 
 ================ TODO:
-let's simplify current generic pragma filter so that it also catches split pragmas (when they survive rule #11 transpiling, for example when the rule is disabled or bypassed). The generic pragma filter should be a permanent safeguard commenting out all pragmas before they reach the rewritten code, like it's now, 
-moving this 
-
-no need to handle the split pragmas in a special way (when they are not transpiled by rule #11)
-
- (without a explicit/specific rule for that): at least is visible to the user. I just want to change where in the pipeline this pragma filter is applied: I want it to be applied unconditionally after all rules, so that 
-
-
-
-the change (aliases) in rule #11 (slit-gen.teleports) now works, but it triggers the hidden fallback (pragma stripping): why?
-
-
-
 when a qubit has been teleported across a split cut (by rule #11, split-gen.teleports), like this e.g.:
 // b[3] teleported into b3_epr_TARGET_1
 then, from that point on, all references to the original qubit (e.g. b[3] ) should be replaced by the teleport target (e.g. b3_epr_TARGET_1 ) in the rewritten code. This process must be incremental, i.e. the 1st split can impact on all successive splits, and so on, so the splits must be processed in sequence (not in parallel) by rule #11.
