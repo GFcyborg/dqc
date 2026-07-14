@@ -47,40 +47,40 @@ if(telept_Zcorrect_q1_2) z q1_TO3;
 if(telept_Xcorrect_q1_2) x q1_TO3;
 // q[1] teleported into q1_TO3
 bit[2] c;
-my_cphase(π / 2) q0_TO3, q1_TO3;
+my_cphase(π / 2) q[0], q[1];
 /* Teleporting qubits into chunk 4:
- * q0_TO3 from chunk 3
- * q1_TO3 from chunk 3
+ * q[0] from chunk 3
+ * q[1] from chunk 3
  */
-qubit q0_TO3_epr_3;
-qubit q0_TO3_TO4;
-bit telept_Zcorrect_q0_TO3_3;
-bit telept_Xcorrect_q0_TO3_3;
-reset q0_TO3_epr_3;
-reset q0_TO3_TO4;
-h q0_TO3_epr_3;
-cx q0_TO3_epr_3, q0_TO3_TO4;
-cx q0_TO3, q0_TO3_epr_3;
-h q0_TO3;
-telept_Zcorrect_q0_TO3_3 = measure q0_TO3;
-telept_Xcorrect_q0_TO3_3 = measure q0_TO3_epr_3;
-if(telept_Zcorrect_q0_TO3_3) z q0_TO3_TO4;
-if(telept_Xcorrect_q0_TO3_3) x q0_TO3_TO4;
-// q0_TO3 teleported into q0_TO3_TO4
-qubit q1_TO3_epr_3;
-qubit q1_TO3_TO4;
-bit telept_Zcorrect_q1_TO3_3;
-bit telept_Xcorrect_q1_TO3_3;
-reset q1_TO3_epr_3;
-reset q1_TO3_TO4;
-h q1_TO3_epr_3;
-cx q1_TO3_epr_3, q1_TO3_TO4;
-cx q1_TO3, q1_TO3_epr_3;
-h q1_TO3;
-telept_Zcorrect_q1_TO3_3 = measure q1_TO3;
-telept_Xcorrect_q1_TO3_3 = measure q1_TO3_epr_3;
-if(telept_Zcorrect_q1_TO3_3) z q1_TO3_TO4;
-if(telept_Xcorrect_q1_TO3_3) x q1_TO3_TO4;
-// q1_TO3 teleported into q1_TO3_TO4
-c[0] = measure q0_TO3_TO4;
-c[1] = measure q1_TO3_TO4;
+qubit q0_epr_3;
+qubit q0_TO4;
+bit telept_Zcorrect_q0_3;
+bit telept_Xcorrect_q0_3;
+reset q0_epr_3;
+reset q0_TO4;
+h q0_epr_3;
+cx q0_epr_3, q0_TO4;
+cx q[0], q0_epr_3;
+h q[0];
+telept_Zcorrect_q0_3 = measure q[0];
+telept_Xcorrect_q0_3 = measure q0_epr_3;
+if(telept_Zcorrect_q0_3) z q0_TO4;
+if(telept_Xcorrect_q0_3) x q0_TO4;
+// q[0] teleported into q0_TO4
+qubit q1_epr_3;
+qubit q1_TO4;
+bit telept_Zcorrect_q1_3;
+bit telept_Xcorrect_q1_3;
+reset q1_epr_3;
+reset q1_TO4;
+h q1_epr_3;
+cx q1_epr_3, q1_TO4;
+cx q[1], q1_epr_3;
+h q[1];
+telept_Zcorrect_q1_3 = measure q[1];
+telept_Xcorrect_q1_3 = measure q1_epr_3;
+if(telept_Zcorrect_q1_3) z q1_TO4;
+if(telept_Xcorrect_q1_3) x q1_TO4;
+// q[1] teleported into q1_TO4
+c[0] = measure q[0];
+c[1] = measure q[1];

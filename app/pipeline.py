@@ -1414,18 +1414,89 @@ def _adapt_template_for_dependency(
     return output
 
 
+def _teleport_target_name(source_qubit: str, next_chunk_index: int) -> str:
+    return f"{_source_qubit_token(source_qubit)}_TO{next_chunk_index}"
+
+
+def _compile_qubit_reference_pattern(name: str) -> re.Pattern[str]:
+    normalized = (name or "").strip()
+    if not normalized:
+        return re.compile(r"$^")
+    if "[" in normalized and normalized.endswith("]"):
+        base = normalized.split("[", 1)[0]
+        parts = [part.strip() for part in re.findall(r"\[([^\]]+)\]", normalized)]
+        if not base or not parts:
+            return re.compile(rf"\b{re.escape(normalized)}\b")
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(base)}"
+        for part in parts:
+            pattern += rf"\s*\[\s*{re.escape(part)}\s*\]"
+        pattern += r"(?![A-Za-z0-9_])"
+        return re.compile(pattern)
+    return re.compile(rf"\b{re.escape(normalized)}\b")
+
+
+def _rewrite_chunk_qubit_aliases(lines: list[str], alias_map: dict[str, str]) -> list[str]:
+    if not alias_map:
+        return list(lines)
+    rewritten = list(lines)
+    for source_name, target_name in sorted(alias_map.items(), key=lambda item: (-len(item[0]), item[0])):
+        if not source_name.strip() or source_name == target_name:
+            continue
+        pattern = _compile_qubit_reference_pattern(source_name)
+        rewritten = [pattern.sub(target_name, line) for line in rewritten]
+    return rewritten
+
+
+def _split_lines_into_chunks(lines: list[str], split_lines: set[int]) -> list[list[str]]:
+    if not lines:
+        return [[]]
+    chunks: list[list[str]] = []
+    start_index = 0
+    for split_line in sorted(split_lines):
+        split_index = max(0, min(len(lines), split_line - 1))
+        if split_index < start_index:
+            continue
+        chunks.append(lines[start_index:split_index])
+        start_index = split_index
+    chunks.append(lines[start_index:])
+    return chunks
+
+
+def _resolve_dependency_source_aliases(
+    incoming_sources: dict[str, set[int]],
+    qubit_register_names: set[str],
+    qubit_register_sizes: dict[str, int],
+    aliases_by_chunk: dict[int, dict[str, str]],
+) -> tuple[dict[str, set[int]], dict[str, str]]:
+    expanded = _expand_qubit_dependency_sources(
+        incoming_sources,
+        qubit_register_names,
+        qubit_register_sizes,
+    )
+    source_aliases: dict[str, str] = {}
+    for name, sources in expanded.items():
+        if not sources:
+            continue
+        source_chunk = max(int(source) for source in sources)
+        chunk_aliases = aliases_by_chunk.get(source_chunk, {})
+        source_aliases[name] = chunk_aliases.get(name, name)
+    return expanded, source_aliases
+
+
 def split_generated_teleportations(
     split_id: int,
     next_chunk_index: int,
     incoming_sources: dict[str, set[int]] | None,
     qubit_register_names: set[str] | None = None,
     qubit_register_sizes: dict[str, int] | None = None,
+    source_aliases: dict[str, str] | None = None,
     *,
     for_display: bool = False,
 ) -> list[str]:
     incoming_sources = incoming_sources or {}
     qubit_register_names = qubit_register_names or set()
     qubit_register_sizes = qubit_register_sizes or {}
+    source_aliases = source_aliases or {}
     dependency_sources_by_name = _expand_qubit_dependency_sources(
         incoming_sources,
         qubit_register_names,
@@ -1437,12 +1508,13 @@ def split_generated_teleportations(
     lines = [f"/* Teleporting qubits into chunk {next_chunk_index}:" ]
     if dependency_names:
         for name in dependency_names:
+            source_name = source_aliases.get(name, name)
             sources = sorted(dependency_sources_by_name.get(name, set()))
             if len(sources) == 1:
-                lines.append(f" * {name} from chunk {sources[0]}")
+                lines.append(f" * {source_name} from chunk {sources[0]}")
             else:
                 joined = ", ".join(str(source) for source in sources)
-                lines.append(f" * {name} from chunks {joined}")
+                lines.append(f" * {source_name} from chunks {joined}")
     else:
         lines.append(f" * no shared qubits from chunk {next_chunk_index - 1}")
     lines.append(" */")
@@ -1461,11 +1533,12 @@ def split_generated_teleportations(
             )
         template_lines = template_text.splitlines()
         for dependency_name in dependency_names:
+            source_name = source_aliases.get(dependency_name, dependency_name)
             adapted = _adapt_template_for_dependency(
                 template_lines,
                 split_id,
                 next_chunk_index,
-                dependency_name.strip(),
+                source_name.strip(),
             )
             lines.extend(adapted)
     if for_display:
@@ -1625,28 +1698,51 @@ def build_distributed_qasm(source: str, split_lines: set[int], chunk_flows: list
         chunk_texts = split_dqc_chunks(dqc_source)
         chunk_flows = compute_chunk_flows(chunk_texts, source)
 
+    chunk_line_groups = _split_lines_into_chunks(lines, split_lines)
+    aliases_by_chunk: dict[int, dict[str, str]] = defaultdict(dict)
+
     generated: list[str] = []
-    split_lines_sorted = sorted(split_lines)
-    split_idx = 0
-    for line_no, line in enumerate(lines, start=1):
-        if split_idx < len(split_lines_sorted) and line_no == split_lines_sorted[split_idx]:
-            split_id = split_idx + 1
-            next_chunk_index = split_idx + 2
-            incoming_sources: dict[str, set[int]] = {}
-            if 1 <= next_chunk_index <= len(chunk_flows):
-                incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
-            generated.extend(
-                split_generated_teleportations(
-                    split_id,
-                    next_chunk_index,
-                    incoming_sources,
-                    qubit_register_names,
-                    qubit_register_sizes,
-                    for_display=for_display,
-                )
+    if chunk_line_groups:
+        generated.extend(chunk_line_groups[0])
+
+    for boundary_index in range(max(0, len(chunk_line_groups) - 1)):
+        split_id = boundary_index + 1
+        next_chunk_index = boundary_index + 2
+        incoming_sources: dict[str, set[int]] = {}
+        if 1 <= next_chunk_index <= len(chunk_flows):
+            incoming_sources = chunk_flows[next_chunk_index - 1].incoming_sources
+
+        expanded_sources, source_aliases = _resolve_dependency_source_aliases(
+            incoming_sources,
+            qubit_register_names,
+            qubit_register_sizes,
+            aliases_by_chunk,
+        )
+        generated.extend(
+            split_generated_teleportations(
+                split_id,
+                next_chunk_index,
+                expanded_sources,
+                qubit_register_names,
+                qubit_register_sizes,
+                source_aliases=source_aliases,
+                for_display=for_display,
             )
-            split_idx += 1
-        generated.append(line)
+        )
+
+        chunk_aliases = aliases_by_chunk[next_chunk_index]
+        rename_map: dict[str, str] = {}
+        for dependency_name, dependency_sources in expanded_sources.items():
+            if not dependency_sources:
+                continue
+            source_name = source_aliases.get(dependency_name, dependency_name)
+            target_name = _teleport_target_name(source_name, next_chunk_index)
+            chunk_aliases[dependency_name] = target_name
+            rename_map[dependency_name] = target_name
+
+        rewritten_next_chunk = _rewrite_chunk_qubit_aliases(chunk_line_groups[next_chunk_index - 1], rename_map)
+        generated.extend(rewritten_next_chunk)
+
     dqc_qasm = "\n".join(generated)
     return dqc_source, dqc_qasm
 
@@ -1957,25 +2053,36 @@ def build_chunk_dependency_graph(
     graph = nx.DiGraph()
     qubit_register_names = qubit_register_names or set()
     qubit_register_sizes = qubit_register_sizes or {}
+    aliases_by_chunk: dict[int, dict[str, str]] = defaultdict(dict)
     for index, flow in enumerate(flows, 1):
         graph.add_node(index, label=flow.title, defined=sorted(flow.defined), used=sorted(flow.used))
 
     edge_labels: dict[tuple[int, int], set[str]] = {}
     for index, flow in enumerate(flows, 1):
-        for name, sources in flow.incoming_sources.items():
-            if qubit_register_names:
-                expanded = _expand_qubit_dependency_sources(
-                    {name: sources},
-                    qubit_register_names,
-                    qubit_register_sizes,
-                )
-            else:
-                expanded = {name: {int(source) for source in sources}}
-            for expanded_name, expanded_sources in expanded.items():
-                for source in expanded_sources:
-                    if source == index:
-                        continue
-                    edge_labels.setdefault((source, index), set()).add(expanded_name)
+        if qubit_register_names:
+            expanded, source_aliases = _resolve_dependency_source_aliases(
+                flow.incoming_sources,
+                qubit_register_names,
+                qubit_register_sizes,
+                aliases_by_chunk,
+            )
+        else:
+            expanded = {name: {int(source) for source in sources} for name, sources in flow.incoming_sources.items()}
+            source_aliases = {name: name for name in expanded}
+
+        for expanded_name, expanded_sources in expanded.items():
+            if not expanded_sources:
+                continue
+            sorted_sources = sorted(int(source) for source in expanded_sources)
+            source_alias = source_aliases.get(expanded_name, expanded_name)
+            for source in sorted_sources:
+                if source == index:
+                    continue
+                edge_labels.setdefault((source, index), set()).add(source_alias)
+
+            selected_source = sorted_sources[-1]
+            selected_alias = aliases_by_chunk.get(selected_source, {}).get(expanded_name, expanded_name)
+            aliases_by_chunk[index][expanded_name] = _teleport_target_name(selected_alias, index)
 
     for (source, dest), labels in edge_labels.items():
         graph.add_edge(source, dest, label=", ".join(sorted(labels)))

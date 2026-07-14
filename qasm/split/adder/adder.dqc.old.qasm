@@ -192,35 +192,35 @@ telept_Xcorrect_cout0_1 = measure cout0_epr_1;
 if(telept_Zcorrect_cout0_1) z cout0_TO2;
 if(telept_Xcorrect_cout0_1) x cout0_TO2;
 // cout[0] teleported into cout0_TO2
-majority cin0_TO2, b0_TO2, a0_TO2;
-majority a0_TO2, b[0 + 1], a[0 + 1];
-majority a1_TO2, b[1 + 1], a[1 + 1];
-majority a2_TO2, b[2 + 1], a[2 + 1];
-cx a3_TO2, cout0_TO2;
-unmaj a2_TO2,b[2+1],a[2+1];
-unmaj a1_TO2,b[1+1],a[1+1];
-unmaj a0_TO2,b[0+1],a[0+1];
-unmaj cin0_TO2, b0_TO2, a0_TO2;
-measure b0_TO2 -> ans[0];
-measure b1_TO2 -> ans[1];
-measure b2_TO2 -> ans[2];
-measure b3_TO2 -> ans[3];
+majority cin[0], b[0], a[0];
+majority a[0], b[0 + 1], a[0 + 1];
+majority a[1], b[1 + 1], a[1 + 1];
+majority a[2], b[2 + 1], a[2 + 1];
+cx a[3], cout[0];
+unmaj a[2],b[2+1],a[2+1];
+unmaj a[1],b[1+1],a[1+1];
+unmaj a[0],b[0+1],a[0+1];
+unmaj cin[0], b[0], a[0];
+measure b[0] -> ans[0];
+measure b[1] -> ans[1];
+measure b[2] -> ans[2];
+measure b[3] -> ans[3];
 /* Teleporting qubits into chunk 3:
- * cout0_TO2 from chunk 2
+ * cout[0] from chunk 2
  */
-qubit cout0_TO2_epr_2;
-qubit cout0_TO2_TO3;
-bit telept_Zcorrect_cout0_TO2_2;
-bit telept_Xcorrect_cout0_TO2_2;
-reset cout0_TO2_epr_2;
-reset cout0_TO2_TO3;
-h cout0_TO2_epr_2;
-cx cout0_TO2_epr_2, cout0_TO2_TO3;
-cx cout0_TO2, cout0_TO2_epr_2;
-h cout0_TO2;
-telept_Zcorrect_cout0_TO2_2 = measure cout0_TO2;
-telept_Xcorrect_cout0_TO2_2 = measure cout0_TO2_epr_2;
-if(telept_Zcorrect_cout0_TO2_2) z cout0_TO2_TO3;
-if(telept_Xcorrect_cout0_TO2_2) x cout0_TO2_TO3;
-// cout0_TO2 teleported into cout0_TO2_TO3
-measure cout0_TO2_TO3 -> ans[4];
+qubit cout0_epr_2;
+qubit cout0_TO3;
+bit telept_Zcorrect_cout0_2;
+bit telept_Xcorrect_cout0_2;
+reset cout0_epr_2;
+reset cout0_TO3;
+h cout0_epr_2;
+cx cout0_epr_2, cout0_TO3;
+cx cout[0], cout0_epr_2;
+h cout[0];
+telept_Zcorrect_cout0_2 = measure cout[0];
+telept_Xcorrect_cout0_2 = measure cout0_epr_2;
+if(telept_Zcorrect_cout0_2) z cout0_TO3;
+if(telept_Xcorrect_cout0_2) x cout0_TO3;
+// cout[0] teleported into cout0_TO3
+measure cout[0] -> ans[4];

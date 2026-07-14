@@ -1183,13 +1183,45 @@ You can reduce even more rule #6 (bit to boolean) green-coloring to the strict c
 I want to change q-comm_template.qasm so that the target qubit has a shorter name, like "q_TO" (instead of "q_epr_TARGET").You should adapt the qasm template and make sure that the app logic of rule #11 (split-gen.teleports) changes its patterns accordingly. After changing template and app logic, the new rule#11-injected teleports targets should result in q_TO<N+1> , instead of current q_epr_TARGET_<N> ; this change of the suffix, from current N, to the new N+1, can be explained by observing that current N is referring to split-id#, while the new N+1 is referring to next chunk# (that is immediately following that split), so for example: split-id #1 will teleport qubits into chunk #2. So it makes sense to call that teleportation target-qubit "q_TO2", because it's being ported to chunk #2.
 2026.07.13-20.15
 ---------------------------------------------
+Ok, now it's time to consider the quantum constraints in our rewritten code (especially rule #11 split-gen.teleports).
+Before I tell you WHAT TO CHANGE, I need to tell you WHY it's needed.
+
+WHY: the informational value of a qubit is its unique state, which can only be moved, but never copied/cloned. A qubit is like a glass (A), and its state is like the water contained in the glass; when we teleport a state into another qubit (B), we pour the water from glass A into glass B. After teleportation's measurement of the source, glass A is empty (no information in there) and so it should not be referred to any longer by the code that follows the teleportation. More concretely, after we've teleported a state across 2 qubits (in our template the q_SOURCE, and the destination qubit q_TO<next-chunk#>), the original qubit (q_SOURCE) becomes useless (it has collapsed), and its state is now in the destination qubit (q_TO<next-chunk#>).
+Let's make a concrete example: bell_state.dqc[.qasm] has 2 split-points, hence 3 chunks, and qubit q[0] passes across all of them. The first split-point is transpiled into this block by rule #11:
+
+/* Teleporting qubits into chunk 2:
+ * q[0] from chunk 1
+ */
+...
+// q[0] teleported into q0_TO2
+
+WHAT TO CHANGE: from that point on, all references to the original qubit (e.g. q[0] ) in the new chunk should be replaced by the chunk-specific teleport-target (e.g. "q0_TO2" for chunk #2). This renaming keeps happening again and again (with new varnames), every time any qubit-dependency is crossing another split-point and so is teleported into another chunk.
+IMPORTANT: This varname substitution must be done sequentially (as a concatenation), one chunk at a time, avoiding the naive one-pass mass-renaming (e.g. becoming q0_TO3 in chunk #3, wrong!), and instead following the general renaming convention of appending "_TO<next-chunk#>" to the teleported qubit-varname (e.g. the varname "q0_TO2" of chunk #2 becomes "q0_TO2_TO3" in chunk #3):
+
+/* Teleporting qubits into chunk 3:
+ * q0_TO2 from chunk 2
+ */
+...
+// q0_TO2 teleported into q0_TO2_TO3
+
+And so on. This renaming concatenation makes it easy for the user to track the route followed by multi-teleported qubits.
+This renaming logic must be adopted also by Chunk dependency graph (where edge-labels must follow the teleport renaming).
+Current dependency analysis is correct: it should just adjust to consider the above renaming of dependencies, NOT export all/unnecessary qubits into every chunk (only export those needed by next chunk), so for example in bell_state.dqc the first split-point should not teleport q[1] into chunk #2 (which is not using it), but only into chunk #3 (i.e. q[1] teleportation only happens at the 2nd split-point). This behavior is correct in the current dependency analysis, and should be preserved (only adapting it to the above renaming scheme).
+
+2026.07.14-18.44 reverted because of too-aggressive dependency analysis.
+2026.07.14-19.14
+---------------------------------------------
+If you want, next I can run the full test suite as a final safety pass.
+
+yes, do it.
+2026.07.14-19.34
+---------------------------------------------
+
 
 
 
 ================ TODO:
-when a qubit has been teleported across a split cut (by rule #11, split-gen.teleports), like this e.g.:
-// b[3] teleported into b3_epr_TARGET_1
-then, from that point on, all references to the original qubit (e.g. b[3] ) should be replaced by the teleport target (e.g. b3_epr_TARGET_1 ) in the rewritten code. This process must be incremental, i.e. the 1st split can impact on all successive splits, and so on, so the splits must be processed in sequence (not in parallel) by rule #11.
+This process must be incremental, i.e. the 1st split can impact on all successive splits, and so on, so the splits must be processed in sequence (not in parallel) by rule #11.
 Also: when there is more than 1 split, it can happen that a telport-target qubit (i.e. a qubit that has been teleported from chunk #1 into chunk #2) is then teleported again into next chunk (i.e. from chunk #2 into chunk #3), and so on: the concatenation can easily create exceedingly long varnames (e.g. b3_epr_TARGET_1_epr_TARGET_2), so we need a way to compress the varname length: I suggest to use a shortened alias.
 
 i.e. into another telport-target qubit

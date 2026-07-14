@@ -6,7 +6,7 @@ from pathlib import Path
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, run_runtime_counts, split_points_from_source, suggest_split_points
+from app.pipeline import DEFAULT_RULES, RuleState, filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, rewrite_and_analyze, run_runtime_counts, split_points_from_source, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
@@ -195,6 +195,31 @@ class PipelineRegressionTests(unittest.TestCase):
 
 
 class GraphLabelRegressionTests(unittest.TestCase):
+    def test_chunk_dependency_labels_follow_chained_teleport_aliases(self) -> None:
+        source = "\n".join(
+            [
+                "OPENQASM 3.1;",
+                'include "stdgates.inc";',
+                "qubit[2] q;",
+                "h q[0];",
+                "h q[1];",
+                "x q[0];",
+                "z q[1];",
+                "cx q[0], q[1];",
+            ]
+        )
+        rules = [RuleState(rule.rule_id, rule.name, rule.description, True) for rule in DEFAULT_RULES]
+
+        result = rewrite_and_analyze(source, rules, {6, 7}, {}, shots=1, timeout_s=1, execute_runtime=False)
+
+        self.assertIsNotNone(result.chunk_graph)
+        self.assertTrue(result.chunk_graph.has_edge(1, 2))
+        self.assertTrue(result.chunk_graph.has_edge(2, 3))
+        self.assertTrue(result.chunk_graph.has_edge(1, 3))
+        self.assertEqual(result.chunk_graph[1][2]["label"], "q[0]")
+        self.assertEqual(result.chunk_graph[2][3]["label"], "q0_TO2")
+        self.assertEqual(result.chunk_graph[1][3]["label"], "q[1]")
+
     def test_wire_label_uses_register_name_instead_of_uid_repr(self) -> None:
         anc = QuantumRegister(2, "anc")
         c = ClassicalRegister(1, "c")

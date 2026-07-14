@@ -214,6 +214,33 @@ class RewriteSpanTests(unittest.TestCase):
         self.assertIn("/* Teleporting qubits into chunk 2:", result.rewritten_source)
         self.assertIn("* q[0] from chunk 1", result.rewritten_source)
 
+    def test_rule_eleven_chains_teleport_aliases_across_multiple_splits(self) -> None:
+        source = "\n".join([
+            "OPENQASM 3.1;",
+            'include "stdgates.inc";',
+            "qubit[2] q;",
+            "h q[0];",
+            "h q[1];",
+            "x q[0];",
+            "z q[1];",
+            "cx q[0], q[1];",
+        ])
+
+        _, dqc_qasm = build_distributed_qasm(source, {6, 7})
+
+        self.assertIn("/* Teleporting qubits into chunk 2:", dqc_qasm)
+        self.assertIn("* q[0] from chunk 1", dqc_qasm)
+        first_block = re.search(r"/\* Teleporting qubits into chunk 2:[\s\S]*?\*/", dqc_qasm)
+        self.assertIsNotNone(first_block)
+        self.assertNotIn("* q[1] from chunk 1", first_block.group(0))
+        self.assertIn("x q0_TO2;", dqc_qasm)
+
+        self.assertIn("/* Teleporting qubits into chunk 3:", dqc_qasm)
+        self.assertIn("* q0_TO2 from chunk 2", dqc_qasm)
+        self.assertIn("* q[1] from chunk 1", dqc_qasm)
+        self.assertIn("// q0_TO2 teleported into q0_TO2_TO3", dqc_qasm)
+        self.assertIn("cx q0_TO2_TO3, q1_TO3;", dqc_qasm)
+
     def test_disabled_rule_eleven_keeps_pragma_visible_but_runtime_handles_it(self) -> None:
         source = "\n".join([
             "OPENQASM 3.1;",
@@ -634,7 +661,7 @@ class RewriteSpanTests(unittest.TestCase):
         lines = result.rewritten_source.splitlines()
 
         teleport_start = next(index for index, line in enumerate(lines) if line.startswith("/* Teleporting qubits into chunk 2:"))
-        x_line = next(index for index, line in enumerate(lines) if line.strip() == "x q[0];")
+        x_line = next(index for index, line in enumerate(lines) if line.strip() in {"x q[0];", "x q0_TO2;"})
         measure0 = next(index for index, line in enumerate(lines) if "measure q[0]" in line)
         measure1 = next(index for index, line in enumerate(lines) if "measure q[1]" in line)
 
