@@ -6,7 +6,7 @@ from pathlib import Path
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import DEFAULT_RULES, RuleState, filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, rewrite_and_analyze, run_runtime_counts, split_points_from_source, suggest_split_points
+from app.pipeline import ChunkFlow, DEFAULT_RULES, RuleState, build_chunk_dependency_graph, filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, rewrite_and_analyze, run_runtime_counts, split_points_from_source, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
@@ -195,6 +195,52 @@ class PipelineRegressionTests(unittest.TestCase):
 
 
 class GraphLabelRegressionTests(unittest.TestCase):
+    def test_chunk_dependency_graph_selects_single_latest_source_per_qubit_dependency(self) -> None:
+        flows = [
+            ChunkFlow(
+                title="Chunk 1",
+                original_text="",
+                rewritten_text="",
+                defined={"a[0]"},
+                used=set(),
+                incoming_sources={},
+                outgoing_targets={},
+            ),
+            ChunkFlow(
+                title="Chunk 2",
+                original_text="",
+                rewritten_text="",
+                defined={"a[0]"},
+                used={"a[0]"},
+                incoming_sources={"a[0]": {1}},
+                outgoing_targets={},
+            ),
+            ChunkFlow(
+                title="Chunk 3",
+                original_text="",
+                rewritten_text="",
+                defined={"a0_TO3"},
+                used={"a[0]"},
+                incoming_sources={"a[0]": {2}},
+                outgoing_targets={},
+            ),
+            ChunkFlow(
+                title="Chunk 4",
+                original_text="",
+                rewritten_text="",
+                defined=set(),
+                used={"a0_TO3"},
+                incoming_sources={"a0_TO3": {2, 3}},
+                outgoing_targets={},
+            ),
+        ]
+
+        graph = build_chunk_dependency_graph(flows)
+
+        self.assertTrue(graph.has_edge(3, 4))
+        self.assertFalse(graph.has_edge(2, 4))
+        self.assertEqual(graph[3][4]["label"], "a0_TO3")
+
     def test_chunk_dependency_labels_follow_chained_teleport_aliases(self) -> None:
         source = "\n".join(
             [

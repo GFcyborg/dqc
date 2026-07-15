@@ -1739,7 +1739,9 @@ class ChunkDagView(QGraphicsView):
                 normal_x = -line_dy / line_len
                 normal_y = line_dx / line_len
                 side = -1.0 if entry["order"] % 2 else 1.0
-                anchor_fraction = 0.20 if entry["order"] % 2 == 0 else 0.80
+                # Keep labels centered along the edge as nodes move, then only
+                # offset along the normal to reduce collisions.
+                anchor_fraction = 0.50
                 anchor_x = start_x + line_dx * anchor_fraction
                 anchor_y = start_y + line_dy * anchor_fraction
                 # Keep labels very close to edges (and occasionally overlapping) for readability.

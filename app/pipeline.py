@@ -2074,14 +2074,17 @@ def build_chunk_dependency_graph(
             if not expanded_sources:
                 continue
             sorted_sources = sorted(int(source) for source in expanded_sources)
-            source_alias = source_aliases.get(expanded_name, expanded_name)
-            for source in sorted_sources:
-                if source == index:
-                    continue
-                edge_labels.setdefault((source, index), set()).add(source_alias)
 
+            # Match rule #11 ownership semantics: each teleported dependency has
+            # exactly one effective source (latest owner), preventing clone-like
+            # duplicate transfers on multiple incoming edges.
             selected_source = sorted_sources[-1]
-            selected_alias = aliases_by_chunk.get(selected_source, {}).get(expanded_name, expanded_name)
+            if selected_source != index:
+                selected_alias = aliases_by_chunk.get(selected_source, {}).get(expanded_name, expanded_name)
+                edge_labels.setdefault((selected_source, index), set()).add(selected_alias)
+            else:
+                selected_alias = aliases_by_chunk.get(selected_source, {}).get(expanded_name, expanded_name)
+
             aliases_by_chunk[index][expanded_name] = _teleport_target_name(selected_alias, index)
 
     for (source, dest), labels in edge_labels.items():
