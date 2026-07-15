@@ -1219,7 +1219,7 @@ yes, do it.
 the edge labels in the chunk dependency graph should be dynamically centered along the edges.
 2026.07.15-18.03
 ---------------------------------------------
-the split-gen.teleportation code (by rule #11) is working well, but the dependency graph is not matching it: e.g. in adder.dqc if you track the route of a[0] from the 2nd chunk to the 4th chunk, you'll see it passes through chunk #3, hence the resulting qubit is correctly named a0_TO3_TO4; instead in the dependency graph there is a (wrong) edge from chunk#2 to chunk#4 which is climing to transfer a0_TO3 (among other qubits) directly into chunk #4. This is wrong on 2 levels:
+the split-gen.teleportation code (by rule #11) is working well, but the dependency graph is not matching it: e.g. in adder.dqc if you track the route of a[0] from the 2nd chunk to the 4th chunk, you'll see it passes through chunk #3, hence the resulting qubit is correctly named a0_TO3_TO4; instead in the dependency graph there is a (wrong) edge from chunk#2 to chunk#4 which is claiming to transfer a0_TO3 (among other qubits) directly into chunk #4. This is wrong on 2 levels:
 - because it's not true that chunk#2 sends a0_TO3 into chunk#4;
 AND 
 - because there is another edge (correctly) sending a0_TO3 from chunk#3 to chunk#4, hence there cannot be 2 edges doing the same qubit-transfer (for the no-cloning theorem of quantum physics);
@@ -1229,29 +1229,7 @@ This means the dependency graph must be fixed to match the code (of rule #11), a
 
 
 
+
+
 ================ TODO:
-This process must be incremental, i.e. the 1st split can impact on all successive splits, and so on, so the splits must be processed in sequence (not in parallel) by rule #11.
-Also: when there is more than 1 split, it can happen that a telport-target qubit (i.e. a qubit that has been teleported from chunk #1 into chunk #2) is then teleported again into next chunk (i.e. from chunk #2 into chunk #3), and so on: the concatenation can easily create exceedingly long varnames (e.g. b3_epr_TARGET_1_epr_TARGET_2), so we need a way to compress the varname length: I suggest to use a shortened alias.
-
-i.e. into another telport-target qubit
-
-the dependency analysis (both in rule #11 split-gen.teleports, and in the deps.graph) wrongly teleports the same qubit from one source to different destinations, and this breaks the quantum no-cloning law: once a chunk has transferred a qubit state to another chunk (via teleportation), its state only lives in this last chunk, so the first chunk cannot export the same qubit again to any other chunk (without first receiving it back).
-the injected teleportations (by rule #11) do transfer the original state into a new qubit var ...
-
-The dependency analysis should track each qubit and make sure that it only lives in max 1 chunk at a time: if 2 or more chunks depend on the same source qubit, then it must be moved sequencially (i.e. first a depending chunk imports the qubit from the source chunk, and then it exports that qubit into the next chunk, and so on).
-This strategy should be followed both in the chunk dependency graph, and in the split-generated teleportations.
-Test your fix against qiskit-example.dqc , which is currently exporting the q array from chunk #1 into both chunk #2 and #3 (wrong!); instead q should first migrate from-#1-to-#2, and then from-#2-to-#3.
-
-the save split chunks does not save ALL the rewritten code into the *.dqc.qasm files.
-
-When executing in split contexts (multi-chunks), make sure (and test) that each qubit lives only in 1 place (= 1 scope = 1 chunk) at a time (i.e. respect quantum no-cloning), even if it's been aliased (like aliased variable in qiskit-example.dqc): in a monolithic context (=1 chunk) this property is enforced directly/automatically by qiskit, but in a multi-chunk context this enforcement cannot be done by qiskit (because from its point of view the code is always run in single runtime context: we are simulating a multi-QPUs network, but the simulation lives only at the logical level, in QASM3 language).
-
-rule #8 (split-gen. teleports) should inject q-comm_template.qasm code after adapting it in an intelligent context-sensitive way, according to the split dependency analysis: for each qubit to be exported into next chunk scope, the q_SOURCE should be ...
-
-repeated/multi split-gen. teleports are re-using same var-names: fix it.
-
-q-comm_template.qasm is a template for all the teleportations to be injected by rule #6.
-For each inter-chunk dependency qubit (represented by q_SOURCE in the template) to be teleported into next chunk (according to the split-generated comment), rule #6 must inject the template code adapted with the actual name of q_SOURCE: e.g. if the name of the qubit is myq[2], then q_SOURCE is to be ... 
-This group of teleportations generated from q-comm_template.qasm should be injected right after the teleportation comment, and before the barrier that follows that comment. 
-
 better uint rewrite rule
