@@ -2120,15 +2120,12 @@ def _heuristic_split_points(source: str, max_points: int) -> tuple[list[int], st
 def _resolve_kahypar_ini() -> Path | None:
     if _kahypar is None:
         return None
-    module_file = getattr(_kahypar, "__file__", None)
-    if not module_file:
-        return None
-    base = Path(module_file).resolve().parent
-    candidates = sorted(base.rglob("*.ini"))
-    if not candidates:
-        return None
-    preferred = [c for c in candidates if "cut" in c.name.lower()]
-    return preferred[0] if preferred else candidates[0]
+    # The pip-distributed kahypar package ships only a compiled extension module
+    # with no bundled *.ini config, so a valid config must be provided by dqc itself.
+    # (Scanning site-packages for "any *.ini" previously picked up unrelated files,
+    # e.g. numpy's mlib.ini, which made KaHyPar fail silently on every real run.)
+    bundled = Path(__file__).resolve().parent / "kahypar_config" / "cut_kKaHyPar_sea20.ini"
+    return bundled if bundled.is_file() else None
 
 
 def _kahypar_partition(vertex_count: int, hyperedges: list[list[int]], edge_weights: list[int], k: int) -> list[int] | None:
@@ -2224,23 +2221,6 @@ def suggest_split_points(source: str, max_points: int | None = None, distributed
     executable_lines: list[int] = []
     line_identifiers: dict[int, set[str]] = {}
 
-    reserved_tokens = {
-        "OPENQASM",
-        "include",
-        "pragma",
-        "if",
-        "for",
-        "while",
-        "switch",
-        "case",
-        "default",
-        "gate",
-        "def",
-        "defcal",
-        "measure",
-        "reset",
-    }
-
     for line_no, code_only in enumerate(code_lines, start=1):
         stripped = code_only.strip()
         if not stripped:
@@ -2252,7 +2232,8 @@ def suggest_split_points(source: str, max_points: int | None = None, distributed
         if re.match(r"^(qubit|bit|int|uint|float|bool|array|const|input|output)\b", stripped):
             continue
         executable_lines.append(line_no)
-        line_identifiers[line_no] = {token for token in IDENT_PATTERN.findall(stripped) if token not in reserved_tokens}
+        # Same operand tokenizer used by qasm_token_graph(): tokens may be indexed (e.g. q[0]).
+        line_identifiers[line_no] = set(_line_operand_tokens(stripped))
 
     if len(executable_lines) < 2:
         return [], "Not enough executable statements to suggest split points."
@@ -2275,9 +2256,10 @@ def suggest_split_points(source: str, max_points: int | None = None, distributed
         if len(unique_vertices) < 2:
             continue
         hyperedges.append(unique_vertices)
-        if name in qubit_names:
+        base_name = name.split("[", 1)[0]
+        if base_name in qubit_names:
             edge_weights.append(12)
-        elif name in bit_names:
+        elif base_name in bit_names:
             edge_weights.append(4)
         else:
             edge_weights.append(2)
@@ -2300,12 +2282,12 @@ def suggest_split_points(source: str, max_points: int | None = None, distributed
     for idx in range(len(executable_lines) - 1):
         if partition[idx] != partition[idx + 1]:
             candidate = executable_lines[idx + 1]
-            if 1 < candidate <= len(lines):
+            if 1 < candidate <= len(lines) and not line_is_inside_blocking_scope(source, candidate):
                 boundary_candidates.append(candidate)
 
     if not boundary_candidates:
         selected, reason = _heuristic_split_points(source, min(target_points, 3))
-        return selected, f"KaHyPar returned no contiguous cut boundary; {reason}"
+        return selected, f"KaHyPar returned no usable cut boundary outside guarded scopes; {reason}"
 
     boundary_costs: list[tuple[int, int]] = []
     for candidate in sorted(set(boundary_candidates)):
@@ -2319,8 +2301,26 @@ def suggest_split_points(source: str, max_points: int | None = None, distributed
         boundary_costs.append((overlap_cost, candidate))
 
     boundary_costs.sort(key=lambda item: (item[0], item[1]))
-    selected = sorted(candidate for _, candidate in boundary_costs[:target_points])
-    selected = [line for line in selected if not line_is_inside_blocking_scope(source, line)]
+
+    # Avoid clustering split points right next to each other: a naive lowest-cost pick can
+    # select several adjacent boundaries (which would create near-empty chunks) simply because
+    # KaHyPar's balance constraint produced consecutive cut edges. Greedily enforce a minimum
+    # spacing between chosen boundaries, falling back to closer spacing only if there are not
+    # enough well-separated candidates to reach the requested number of split points.
+    min_gap = max(2, len(executable_lines) // max(1, distributed_nodes * 3))
+    selected: list[int] = []
+    for gap in (min_gap, max(1, min_gap // 2), 1):
+        if len(selected) >= target_points:
+            break
+        for _, candidate in boundary_costs:
+            if len(selected) >= target_points:
+                break
+            if candidate in selected:
+                continue
+            if all(abs(candidate - existing) >= gap for existing in selected):
+                selected.append(candidate)
+    selected.sort()
+
     if not selected:
         return [], f"KaHyPar selected split boundaries that all fall inside guarded scopes for {distributed_nodes} QPU nodes."
     reason = ", ".join(f"line {line_no}" for line_no in selected)
@@ -2365,6 +2365,22 @@ def ast_to_tree(node: Any, label: str = "program", depth: int = 0) -> list[str]:
     return lines
 
 
+def _line_operand_tokens(line: str) -> list[str]:
+    """Tokenize a code line's operands (bare or indexed identifiers, e.g. q[0]), skipping
+    the leading instruction/gate mnemonic. Shared by qasm_token_graph() and
+    suggest_split_points() so the interaction graph and KaHyPar hyperedges agree on what
+    counts as a shared resource."""
+    if not line:
+        return []
+    # Control-flow keywords are often glued to "(" (e.g. "if(c0)"), which would otherwise
+    # merge the condition variable into the dropped leading-mnemonic chunk below.
+    line = re.sub(r"^(if|while|switch)\(", r"\1 (", line)
+    if "(" not in line and " " not in line:
+        return []
+    tail = line.split(" ", 1)[1] if " " in line else line
+    return re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\b", tail)
+
+
 def qasm_token_graph(source: str) -> tuple[nx.DiGraph, nx.Graph, nx.DiGraph]:
     dag = nx.DiGraph()
     interaction = nx.Graph()
@@ -2384,20 +2400,18 @@ def qasm_token_graph(source: str) -> tuple[nx.DiGraph, nx.Graph, nx.DiGraph]:
         dag.add_node(node, label=line, chunk=current_chunk)
         if op_id > 1:
             dag.add_edge(f"op_{op_id - 1}", node)
-        if "(" in line or " " in line:
-            tail = line.split(" ", 1)[1] if " " in line else line
-            operands = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\b", tail)
-            if len(operands) >= 2:
-                for i in range(len(operands)):
-                    for j in range(i + 1, len(operands)):
-                        a, b = sorted((operands[i], operands[j]))
-                        if a == b:
-                            continue
-                        if interaction.has_edge(a, b):
-                            interaction[a][b]["weight"] += 1
-                        else:
-                            interaction.add_edge(a, b, weight=1)
-                chunk_use[current_chunk].update(operands)
+        operands = _line_operand_tokens(line)
+        if len(operands) >= 2:
+            for i in range(len(operands)):
+                for j in range(i + 1, len(operands)):
+                    a, b = sorted((operands[i], operands[j]))
+                    if a == b:
+                        continue
+                    if interaction.has_edge(a, b):
+                        interaction[a][b]["weight"] += 1
+                    else:
+                        interaction.add_edge(a, b, weight=1)
+            chunk_use[current_chunk].update(operands)
     chunk_ids = sorted(chunk_use)
     for left, right in zip(chunk_ids, chunk_ids[1:]):
         shared = sorted(chunk_use[left] & chunk_use[right])
@@ -2614,9 +2628,12 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"QASM parse failed: {exc}", kind="error"))
     
-    # Use final_rewritten_source for all graph computations (DAG, interaction graph, suggestions)
+    # Use final_rewritten_source for all graph computations (DAG, interaction graph)
     dag_graph, interaction_graph, _ = qasm_token_graph(downstream_rewritten_source)
-    suggested_split_points, suggestion_reason = suggest_split_points(downstream_rewritten_source, distributed_nodes=distributed_nodes)
+    # Split-point suggestions must be computed against the *original* source: the app injects
+    # split pragmas and highlights suggestions in the Original code view, whose line numbers do
+    # not correspond to the rewritten/unfolded source (e.g. unrolled for-loops shift line counts).
+    suggested_split_points, suggestion_reason = suggest_split_points(source, distributed_nodes=distributed_nodes)
     
     circuit_result = None
     counts: dict[str, int] = {}

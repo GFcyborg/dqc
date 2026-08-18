@@ -946,6 +946,7 @@ class HtmlCodeView(QTextBrowser):
                 if (
                     target_line < 1
                     or target_line > len(lines)
+                    or target_line in used_snippet_lines
                     or not _line_has_rule6_guard(lines[target_line - 1], snippet)
                 ):
                     remapped = _find_nearest_line_rule6(lines, snippet, preferred_line, used_snippet_lines)
