@@ -1226,10 +1226,25 @@ AND
 This means the dependency graph must be fixed to match the code (of rule #11), and that some test must check that there is no duplication/cloning of a qubit in the dependency graph.
 2026.07.15-18.55
 ---------------------------------------------
-
+there are some out-of-date packages to be updated: matplotlib (3.11.1), pylatexenc (2.11), PySide6 (6.11.2), qiskit (2.5.2). Take particular care in updating qiskit, making sure everything works as expected (run all tests and a couple of qasm/dqc examples, to be sure). Also check the changelog, for fixes that may be relevant for this app. https://github.com/Qiskit/qiskit/releases
+2026.08.18-15.12
+---------------------------------------------
 
 
 
 
 ================ TODO:
+upgrade packages:
+    matplotlib: 3.11.0 (out-of-date: latest is 3.11.1)
+    pylatexenc: 2.10 (out-of-date: latest is 2.11)
+    PySide6: 6.11.1 (out-of-date: latest is 6.11.2)
+    qiskit: 2.5.0 (out-of-date: latest is 2.5.2)
+
+better KaHyPar-partitioning suggestions
+
 better uint rewrite rule
+
+translate qasm comments ita-to-eng in: deutsch-jozsa*
+
+simplify code
+
