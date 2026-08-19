@@ -208,8 +208,18 @@ class ChunkFlow:
     outgoing_targets: dict[str, set[int]]
 
 
+# Rule IDs referenced by name outside of the sequential 1-10 rewrite chain:
+# these are the ones with special pipeline handling (bypass-all, the
+# teleport-generation rule that switches canonical output, and the two
+# always-on post-processing rules), so give them names instead of literals.
+RULE_ID_BYPASS_ALL = 0
+RULE_ID_SPLIT_GEN_TELEPORTS = 11
+RULE_ID_RESTORE_CONCAT = 98
+RULE_ID_NO_PRAGMAS = 99
+UNCONDITIONAL_RULE_IDS = (RULE_ID_RESTORE_CONCAT, RULE_ID_NO_PRAGMAS)
+
 DEFAULT_RULES = [
-    RuleState(0, "Bypass all CONDITIONAL rewrites", "Temporarily ignore all the conditional rules without losing their toggle states."),
+    RuleState(RULE_ID_BYPASS_ALL, "Bypass all CONDITIONAL rewrites", "Temporarily ignore all the conditional rules without losing their toggle states."),
     RuleState(1, "Drop comments", "Remove single-line comments from the transpiled output."),
     RuleState(2, "Drop blank lines", "Compact the transpiled output by removing empty lines."),
     RuleState(3, "Inject OPENQASM 3.1", "Insert a version header when the source does not declare one."),
@@ -220,21 +230,22 @@ DEFAULT_RULES = [
     RuleState(8, "Inline let-aliases", "Drop let alias declarations and inline subsequent alias references to their aliased value."),
     RuleState(9, "Resolve chained indexing", "Resolve chained indexing like `q[2:5][1]` and `q[{1,2}][0]` to direct element references."),
     RuleState(10, "Unfold broadcast operations", "Unfold broadcast-style operations (reset, barrier, measure) into explicit per-qubit operations."),
-    RuleState(11, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
+    RuleState(RULE_ID_SPLIT_GEN_TELEPORTS, "Split-generated teleportations", "Rewrite split pragmas into folded teleportation comment blocks in the rewritten view."),
 ]
 
 UNCONDITIONAL_RULES = [
-    RuleState(98, "Restore ++ alias concatenation", "Normalize ++ concatenations in let/const to index-set syntax for qiskit-qasm3-import.", enabled=True),
-    RuleState(99, "No pragmas into qiskit", "Unconditional rule: comment out all pragmas before qiskit-qasm3-import (always applied last).", enabled=True),
+    RuleState(RULE_ID_RESTORE_CONCAT, "Restore ++ alias concatenation", "Normalize ++ concatenations in let/const to index-set syntax for qiskit-qasm3-import.", enabled=True),
+    RuleState(RULE_ID_NO_PRAGMAS, "No pragmas into qiskit", "Unconditional rule: comment out all pragmas before qiskit-qasm3-import (always applied last).", enabled=True),
 ]
 
 
 def ordered_active_rule_ids(rules: list[RuleState]) -> list[int]:
     rule_map = {rule.rule_id: rule.enabled for rule in rules}
-    if rule_map.get(0, False):
+    if rule_map.get(RULE_ID_BYPASS_ALL, False):
         return []
-    # Exclude unconditional rules (98, 99) from the ordered list; they're applied separately
-    return sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id not in (0, 98, 99))
+    # Exclude unconditional rules from the ordered list; they're applied separately.
+    excluded = (RULE_ID_BYPASS_ALL, *UNCONDITIONAL_RULE_IDS)
+    return sorted(rule_id for rule_id, enabled in rule_map.items() if enabled and rule_id not in excluded)
 
 INNER_SCOPE_BLOCKING_KINDS = {
     "QuantumGateDefinition",
@@ -2522,7 +2533,7 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
 
 def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[int], parameter_bindings: dict[str, str] | None = None, shots: int = 1024, timeout_s: int = 10, execute_runtime: bool = True, distributed_nodes: int = 3) -> RewriteResult:
     parse = safe_import_qasm3()
-    bypass = any(rule.rule_id == 0 and rule.enabled for rule in rules)
+    bypass = any(rule.rule_id == RULE_ID_BYPASS_ALL and rule.enabled for rule in rules)
     active_rule_ids = ordered_active_rule_ids(rules)
     spans: list[RewriteSpan] = []
     lines = normalize_lines(source)
@@ -2596,7 +2607,7 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     fallback_events_set: set[str] = set()
     chunk_flows = compute_chunk_flows(chunk_texts, rewritten_source, fallback_events=fallback_events_set)
     _, dqc_qasm = build_distributed_qasm(rewritten_source, split_lines, chunk_flows=chunk_flows, for_display=True)
-    apply_rule_teleports = 11 in active_rule_ids
+    apply_rule_teleports = RULE_ID_SPLIT_GEN_TELEPORTS in active_rule_ids
     
     # Determine canonical rewritten source (same for display, parsing, runtime, graphs)
     if split_lines:

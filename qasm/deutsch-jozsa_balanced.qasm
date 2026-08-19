@@ -3,17 +3,15 @@
 OPENQASM 3.0;
 include "stdgates.inc";
 
-// ── Registri ──────────────────────────────────────────────────────────────
-qubit[3] q;       // q[0], q[1], q[2] : input qubits  (righe superiori)
-qubit    anc;     // q[3]             : ancilla qubit  (riga inferiore)
-bit[3]   c;       // registro classico per le misure
+qubit[3] q;       // input qubits
+qubit    anc;     // ancilla qubit
+bit[3]   c;       // classical bit for measurements
 
-// ── Inizializzazione ancilla: |0⟩ → |1⟩ ──────────────────────────────────
-x anc;
+x anc; // init ancilla: |0⟩ → |1⟩
 
 barrier q[0], q[1], q[2], anc;
 
-// ── Hadamard su tutti i qubit ─────────────────────────────────────────────
+// Hadamard on all qubits
 h q[0];
 h q[1];
 h q[2];
@@ -21,7 +19,7 @@ h anc;
 
 barrier q[0], q[1], q[2], anc;
 
-// ── Oracolo bilanciato  Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂ ───────────────────────
+// Balanced oracle Uf : f(x) = x₀ ⊕ x₁ ⊕ x₂
 // Phase kickback: |x⟩|−⟩ → (−1)^{f(x)} |x⟩|−⟩
 cx q[0], anc;
 cx q[1], anc;
@@ -29,13 +27,12 @@ cx q[2], anc;
 
 barrier q[0], q[1], q[2], anc;
 
-// ── Hadamard inverso sui qubit di input ───────────────────────────────────
+// Reverse Hadamard on input qubits
 h q[0];
 h q[1];
 h q[2];
 
 barrier q[0], q[1], q[2], anc;
 
-// ── Misura (solo i qubit di input; anc non misurata) ─────────────────────
-c = measure q;
-// Atteso per oracolo bilanciato: c ≠ 000  (tipicamente 111 per questo Uf)
+// Measurement (only input qubits; ancilla not measured)
+c = measure q; // Expected for balanced oracle: c ≠ 000  (typically 111 for this Uf)

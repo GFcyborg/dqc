@@ -34,7 +34,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL
+from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL, RULE_ID_BYPASS_ALL, RULE_ID_RESTORE_CONCAT, RULE_ID_SPLIT_GEN_TELEPORTS
+
+# Semantic colors shared across the rewritten-code view, teleport/split
+# highlighting, and circuit label styling; kept in one place so all
+# split/teleport-related UI stays visually consistent.
+COLOR_REWRITE_GREEN = "#22c55e"       # rule-rewritten code (Rewritten tab)
+COLOR_TELEPORT_ORANGE = "#ca8a04"     # split-gen. teleports (rule 11) output
+COLOR_QUBIT_LABEL_GREEN = "#1f5f2d"   # qubit labels in circuit/DAG/interaction graphs
+COLOR_CLBIT_LABEL_MUTED = "#64748b"   # classical-bit labels (muted, non-bold)
+
+# A bare `barrier;` or `barrier q, r;` statement (used to detect the
+# orange split-generated barriers injected around teleport blocks).
+_BARRIER_LINE_RE = re.compile(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$")
 
 
 def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, font: QFont | None = None):
@@ -49,7 +61,7 @@ def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, 
 def _is_split_generated_barrier_line(lines: list[str], index: int) -> bool:
     if index < 0 or index >= len(lines):
         return False
-    if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
+    if not _BARRIER_LINE_RE.match(lines[index]):
         return False
     return (index + 1 < len(lines) and lines[index + 1].startswith("/* Teleporting qubits into chunk ")) or (index in _split_generated_block_line_indexes(lines))
 
@@ -63,7 +75,7 @@ def _split_generated_block_line_indexes(lines: list[str]) -> set[int]:
             i += 1
             continue
 
-        if i > 0 and re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[i - 1]):
+        if i > 0 and _BARRIER_LINE_RE.match(lines[i - 1]):
             indexes.add(i - 1)
 
         # Consume the comment block (up to and including */)
@@ -82,7 +94,7 @@ def _split_generated_block_line_indexes(lines: list[str]) -> set[int]:
                 indexes.add(i)
                 i += 1
                 break
-            if re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", line):
+            if _BARRIER_LINE_RE.match(line):
                 indexes.add(i)
                 i += 1
                 break
@@ -106,7 +118,7 @@ def _split_generated_barrier_ordinals(source: str | None) -> set[int]:
     ordinals: set[int] = set()
     barrier_ordinal = 0
     for index in range(len(lines)):
-        if not re.match(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", lines[index]):
+        if not _BARRIER_LINE_RE.match(lines[index]):
             continue
         barrier_ordinal += 1
         if index in split_generated_indexes:
@@ -114,7 +126,7 @@ def _split_generated_barrier_ordinals(source: str | None) -> set[int]:
     return ordinals
 
 
-def _recolor_split_generated_barriers(figure: Any, split_generated_ordinals: set[int], color_hex: str = "#ca8a04") -> None:
+def _recolor_split_generated_barriers(figure: Any, split_generated_ordinals: set[int], color_hex: str = COLOR_TELEPORT_ORANGE) -> None:
     if not split_generated_ordinals:
         return
     axes = getattr(figure, "axes", None) or []
@@ -158,7 +170,7 @@ def _recolor_split_generated_barriers(figure: Any, split_generated_ordinals: set
             patch.set_alpha(0.6)
 
 
-def _style_circuit_qubit_labels(figure: Any, circuit: Any, color_hex: str = "#1f5f2d") -> None:
+def _style_circuit_qubit_labels(figure: Any, circuit: Any, color_hex: str = COLOR_QUBIT_LABEL_GREEN) -> None:
     axes = getattr(figure, "axes", None) or []
     if not axes:
         return
@@ -173,41 +185,30 @@ def _style_circuit_qubit_labels(figure: Any, circuit: Any, color_hex: str = "#1f
         text = re.sub(r"[^A-Za-z0-9]+", "", text)
         return text.lower()
 
-    qubit_label_variants: set[str] = set()
-    clbit_label_variants: set[str] = set()
-    for qubit in list(getattr(circuit, "qubits", []) or []):
-        register = getattr(qubit, "_register", None) or getattr(qubit, "register", None)
-        index = getattr(qubit, "_index", None)
-        if index is None:
-            index = getattr(qubit, "index", None)
-        register_name = getattr(register, "name", None) if register is not None else None
-        if register_name is not None and index is not None:
-            qubit_label_variants.update({
-                f"{register_name}[{index}]",
-                f"{register_name}_{index}",
-                f"{register_name}{index}",
-                f"${{{register_name}}}_{{{index}}}$",
-                f"${{{register_name}}}{index}$",
-            })
-        if register_name is not None:
-            qubit_label_variants.add(str(register_name))
+    def _raw_label_variants(bits: Any) -> set[str]:
+        # A circuit bit can be referenced in mpl output via any of these
+        # equivalent spellings, depending on qiskit version/drawer mode.
+        variants: set[str] = set()
+        for bit in list(bits or []):
+            register = getattr(bit, "_register", None) or getattr(bit, "register", None)
+            index = getattr(bit, "_index", None)
+            if index is None:
+                index = getattr(bit, "index", None)
+            register_name = getattr(register, "name", None) if register is not None else None
+            if register_name is not None and index is not None:
+                variants.update({
+                    f"{register_name}[{index}]",
+                    f"{register_name}_{index}",
+                    f"{register_name}{index}",
+                    f"${{{register_name}}}_{{{index}}}$",
+                    f"${{{register_name}}}{index}$",
+                })
+            if register_name is not None:
+                variants.add(str(register_name))
+        return variants
 
-    for clbit in list(getattr(circuit, "clbits", []) or []):
-        register = getattr(clbit, "_register", None) or getattr(clbit, "register", None)
-        index = getattr(clbit, "_index", None)
-        if index is None:
-            index = getattr(clbit, "index", None)
-        register_name = getattr(register, "name", None) if register is not None else None
-        if register_name is not None and index is not None:
-            clbit_label_variants.update({
-                f"{register_name}[{index}]",
-                f"{register_name}_{index}",
-                f"{register_name}{index}",
-                f"${{{register_name}}}_{{{index}}}$",
-                f"${{{register_name}}}{index}$",
-            })
-        if register_name is not None:
-            clbit_label_variants.add(str(register_name))
+    qubit_label_variants = _raw_label_variants(getattr(circuit, "qubits", []))
+    clbit_label_variants = _raw_label_variants(getattr(circuit, "clbits", []))
 
     qubit_label_variants = {_normalize_label_text(label) for label in qubit_label_variants if str(label).strip()}
     clbit_label_variants = {_normalize_label_text(label) for label in clbit_label_variants if str(label).strip()}
@@ -228,7 +229,7 @@ def _style_circuit_qubit_labels(figure: Any, circuit: Any, color_hex: str = "#1f
                     text_item.set_fontsize(float(getattr(text_item, "get_fontsize", lambda: 10.0)()) + 1.2)
                 elif normalized in clbit_label_variants:
                     # Keep classical labels explicitly non-bold and slightly muted for stronger contrast.
-                    text_item.set_color("#64748b")
+                    text_item.set_color(COLOR_CLBIT_LABEL_MUTED)
                     text_item.set_fontweight("normal")
             except Exception:
                 continue
@@ -1012,7 +1013,7 @@ class HtmlCodeView(QTextBrowser):
             for start, end in ranges:
                 if start > cursor:
                     parts.append(self._html_escape(line_text[cursor:start]))
-                parts.append(f"<span style='color:#22c55e'>{self._html_escape(line_text[start:end])}</span>")
+                parts.append(f"<span style='color:{COLOR_REWRITE_GREEN}'>{self._html_escape(line_text[start:end])}</span>")
                 cursor = end
             if cursor < len(line_text):
                 parts.append(self._html_escape(line_text[cursor:]))
@@ -1025,14 +1026,14 @@ class HtmlCodeView(QTextBrowser):
             line = lines[line_index]
             if _is_split_generated_barrier_line(lines, line_index):
                 escaped = self._html_escape(line)
-                decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
+                decorated.append(f"<span style='color:{COLOR_TELEPORT_ORANGE}'>{escaped}</span>")
                 line_index += 1
                 continue
             if line.startswith("/* Teleporting qubits into chunk "):
                 while line_index < len(lines):
                     block_line = lines[line_index]
                     escaped = self._html_escape(block_line)
-                    decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
+                    decorated.append(f"<span style='color:{COLOR_TELEPORT_ORANGE}'>{escaped}</span>")
                     line_index += 1
                     if block_line.strip() == "*/":
                         break
@@ -1044,12 +1045,12 @@ class HtmlCodeView(QTextBrowser):
                 # appear in the Rewritten code view.
                 line_index += 1
                 continue
-            if line_no in self._teleport_lines or 11 in line_rule_ids.get(line_no, set()):
-                decorated.append(f"<span style='color:#ca8a04'>{escaped}</span>")
+            if line_no in self._teleport_lines or RULE_ID_SPLIT_GEN_TELEPORTS in line_rule_ids.get(line_no, set()):
+                decorated.append(f"<span style='color:{COLOR_TELEPORT_ORANGE}'>{escaped}</span>")
             elif line_no in partial_highlights:
                 decorated.append(_highlight_snippets(line, partial_highlights[line_no]))
             elif line_no in visible_lines:
-                decorated.append(f"<span style='color:#22c55e'>{escaped}</span>")
+                decorated.append(f"<span style='color:{COLOR_REWRITE_GREEN}'>{escaped}</span>")
             else:
                 decorated.append(escaped)
             line_index += 1
@@ -1096,8 +1097,8 @@ class RulePanel(QFrame):
         layout.setSpacing(8)
         
         # Separate conditional and unconditional rules
-        conditional_rules = [r for r in rules if r.rule_id < 98]
-        unconditional_rules = [r for r in rules if r.rule_id >= 98]
+        conditional_rules = [r for r in rules if r.rule_id < RULE_ID_RESTORE_CONCAT]
+        unconditional_rules = [r for r in rules if r.rule_id >= RULE_ID_RESTORE_CONCAT]
         self._unconditional_rules = {r.rule_id for r in unconditional_rules}
         
         # Add conditional rules
@@ -1108,7 +1109,7 @@ class RulePanel(QFrame):
             row_layout.setSpacing(8)
             check = QCheckBox(f"{rule.rule_id}. {rule.name}")
             check.setChecked(rule.enabled)
-            if rule.rule_id == 11:
+            if rule.rule_id == RULE_ID_SPLIT_GEN_TELEPORTS:
                 check.setStyleSheet("color: #0f172a; font-weight: bold; text-decoration: underline;")
             else:
                 check.setStyleSheet("color: #0f172a;")
@@ -1166,13 +1167,13 @@ class RulePanel(QFrame):
                 check.blockSignals(True)
                 check.setChecked(rule_id in enabled_rules)
                 check.blockSignals(False)
-                if bypass and rule_id != 0:
+                if bypass and rule_id != RULE_ID_BYPASS_ALL:
                     check.setEnabled(False)
-                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
+                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == RULE_ID_SPLIT_GEN_TELEPORTS else ""
                     check.setStyleSheet(f"color: #94a3b8;{extra}")
                 else:
                     check.setEnabled(True)
-                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == 11 else ""
+                    extra = " font-weight: bold; text-decoration: underline;" if rule_id == RULE_ID_SPLIT_GEN_TELEPORTS else ""
                     check.setStyleSheet(f"color: #0f172a;{extra}")
 
 
@@ -1868,7 +1869,10 @@ class QiskitDagView(QGraphicsView):
             label.setFont(label_font)
             label.setToolTip(wire_text)
             label.setPos(10, y - label.boundingRect().height() / 2)
-            wire_line = scene.addLine(left - 8, y, scene_right, y, QPen(QColor("#d7deea")))
+            # Fatten the wire so it's easy to mouse-over/hover for its tooltip.
+            wire_pen = QPen(QColor("#d7deea"))
+            wire_pen.setWidthF(6.0)
+            wire_line = scene.addLine(left - 8, y, scene_right, y, wire_pen)
             wire_line.setToolTip(wire_text)
 
         last_x: dict[Any, float] = {wire: left - 8 for wire in wires}

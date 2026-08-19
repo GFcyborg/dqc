@@ -3,20 +3,20 @@
 OPENQASM 3.0;
 include "stdgates.inc";
 
-// 4 qubit: q[0]=q0, q[1]=q1, q[2]=q2, q[3]=ancilla/target
+// q[3]=ancilla/target
 qubit[4] q;
 bit[4] c;
 
 barrier q;
 
-// ── Blocco 1 : scatta per (q0=1, q1=1, q2=0) ─────────────────────────────
-x q[2];                          // controllo negativo su q2
+// this block is triggered by: (q0=1, q1=1, q2=0)
+x q[2];                          // negative control on q2
 ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[2];                          // ripristino q2
+x q[2];                          // revert q2
 
 barrier q;
 
-// ── Blocco 2 : scatta per (q0=0, q1=0, q2=0) ─────────────────────────────
+// this block is triggered by: (q0=0, q1=0, q2=0)
 x q[0];
 x q[1];
 x q[2];
@@ -27,7 +27,7 @@ x q[2];
 
 barrier q;
 
-// ── Blocco 3 : scatta per (q0=0, q1=1, q2=0) ─────────────────────────────
+// this block is triggered by: (q0=0, q1=1, q2=0)
 x q[0];
 x q[2];
 ctrl(3) @ x q[0], q[1], q[2], q[3];
@@ -36,7 +36,7 @@ x q[2];
 
 barrier q;
 
-// ── Blocco 4 : scatta per (q0=1, q1=0, q2=1) ─────────────────────────────
+// this block is triggered by: (q0=1, q1=0, q2=1)
 x q[1];
 ctrl(3) @ x q[0], q[1], q[2], q[3];
 x q[1];

@@ -40,6 +40,9 @@ from .pipeline import (
     DEFAULT_RULES,
     UNCONDITIONAL_RULES,
     QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS,
+    RULE_ID_BYPASS_ALL,
+    RULE_ID_RESTORE_CONCAT,
+    RULE_ID_SPLIT_GEN_TELEPORTS,
     RuleState,
     build_ast_graph,
     build_distributed_qasm,
@@ -1118,8 +1121,8 @@ already declared in the surrounding chunk code.</p>
         return "\n".join(result_lines)
 
     def on_rule_toggled(self, rule_id: int, checked: bool) -> None:
-        # Ignore unconditional rules (rule 98, 99 - always applied)
-        if rule_id >= 98:
+        # Ignore unconditional rules (always applied, no user checkbox)
+        if rule_id >= RULE_ID_RESTORE_CONCAT:
             return
         for rule in self.rules:
             if rule.rule_id == rule_id:
@@ -1129,7 +1132,7 @@ already declared in the surrounding chunk code.</p>
         self.refresh()
 
     def _rule_bypass_enabled(self) -> bool:
-        return any(rule.rule_id == 0 and rule.enabled for rule in self.rules)
+        return any(rule.rule_id == RULE_ID_BYPASS_ALL and rule.enabled for rule in self.rules)
 
     def _strip_display_only_rewrite_markers(self, text: str) -> str:
         return strip_internal_display_markers(text)
