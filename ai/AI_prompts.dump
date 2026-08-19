@@ -1323,8 +1323,10 @@ widgets is still marked in red by the IDE. The warning is:
 
 2026.08.19-13.06
 ---------------------------------------------
-
-
+Now that GitHub Copilot Pro is active, repeat the refactoring in order to achieve better code de-duplication, simplification, and readability (and don´t repeat previous errors! I expect better results than last refactoring pass).
+Keep app semantics (correctness) and clean-up all IDE warnings. Pass all tests.
+2026.08.19-13.17
+---------------------------------------------
 
 
 ================ TODO:

@@ -1049,16 +1049,13 @@ already declared in the surrounding chunk code.</p>
         return "\n".join(stripped_lines), display_to_stripped, stripped_to_display
 
     def _clicked_line_to_split_point(self, source_text: str, clicked_line: int) -> int:
-        lines = source_text.splitlines()
         if clicked_line < 1:
             return clicked_line
-        stripped_count = 0
-        for line_no, line in enumerate(lines, start=1):
-            if line_no == clicked_line:
-                return stripped_count + 1
-            if not line.strip().startswith("pragma dqc.v1.split"):
-                stripped_count += 1
-        return stripped_count + 1
+        _, display_to_stripped, _ = self._strip_pragmas_with_mapping(source_text)
+        mapped_line = display_to_stripped.get(clicked_line)
+        if mapped_line is not None:
+            return mapped_line
+        return sum(display_line < clicked_line for display_line in display_to_stripped) + 1
 
     def load_file(self, path: Path, *, preserve_parameter_bindings: bool = False, prompt_for_parameters: bool = True) -> None:
         if not path.exists():
@@ -1502,7 +1499,8 @@ already declared in the surrounding chunk code.</p>
 
     def _split_save_source(self, source: str | None = None) -> str:
         source = self.original_editor.toPlainText() if source is None else source
-        return "\n".join(line for line in source.splitlines() if not line.strip().startswith("pragma dqc.v1.split"))
+        stripped_source, _, _ = self._strip_pragmas_with_mapping(source)
+        return stripped_source
 
     def _set_original_editor_text_preserve_state(self, new_text: str) -> None:
         had_focus = self.original_editor.hasFocus()
