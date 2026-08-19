@@ -1279,6 +1279,53 @@ manually translated qasm comments ita-to-eng in: deutsch-jozsa*
 something must have gotten lost in the last refactoring: e.g. when unchecking rule #11 (split-gen.teleports) on adder.dqc, the rewritten code and its circuit drawing do update correctly, but the runtime output still shows the qubits injected by rule #11. Fix it (bring back the correct behavior, which was there before the refactoring); also, I need a test to always check that all the outputs/graphs (i.e. circuit drawing, runtime execution, DAG, qubit interaction, chunk dependencies, etc.) are actually based on the [same] rewritten code (when the "Use rewritten code" checkbox is checked, as it is by default). I expected such test to already be in place, actually, as I've already required it...
 2026.08.19-12.08
 ---------------------------------------------
+The text "Loading circuit ..." inside the top-right button is not showing fully: give it some more space. More generally, make sure that all text inside the buttons is left-aligned (inside the buttons) so that, when resizing the panes/views under their natural sizes, their texts get cut at the end (now the text is centered inside the buttons, and so the text gets cut at the beginning and the end).
+2026.08.19-12.33 (undone and re-run with corrected "right" into "left")
+2026.08.19-12.37
+---------------------------------------------
+The console previously showed this warning while running the app:
+    NameError: name 'QMenu' is not defined. Did you mean: 'menu'?
+    Error calling Python override of QGraphicsView::contextMenuEvent(): Traceback (most recent call last):
+    File "/home/gf/Documents/SPDM801_thesis/dqc/app/widgets.py", line 1983, in contextMenuEvent
+        menu = QMenu(self)
+            ^^^^^
+    NameError: name 'QMenu' is not defined. Did you mean: 'menu'?
+
+Then I noticed there are several other expressions marked in red by the IDE, for different reasons (e.g. register_size, QRectF, savefig, figure, ...). Fix them all, without breaking current semantics.
+2026.08.19-12.49
+---------------------------------------------
+widgets.py is now clean of warnings, but your changes has now broken matplotlib: the circuit drawing is now become ascii-art, also showing this error message: 
+    Circuit rendered in text mode (matplotlib unavailable):
+Fix it (bring back the graphical-mode of the circuit).
+2026.08.19-12.56
+---------------------------------------------
+I also re-ran a full workspace diagnostics check and noticed a large set of pre-existing type errors in main_window_clean.py (mostly PySide6 enum-scoping issues like Qt.Horizontal/QDialogButtonBox.Ok, plus some QWidget-typed variables missing narrower types). These are unrelated to this regression and out of scope for this fix — let me know if you'd like me to address them in a separate pass.
+
+Yes, do it.
+2026.08.19-13.01
+---------------------------------------------
+widgets is still marked in red by the IDE. The warning is:
+
+    (method)
+    def loadFromData(
+    buf: bytes | bytearray | memoryview[int],
+    /,
+    format: bytes | bytearray | memoryview[int] | None = ...,
+    flags: ImageConversionFlag = ...
+    ) -> bool: ...
+
+    def loadFromData(
+    data: QByteArray | bytes | bytearray | memoryview[int],
+    /,
+    format: bytes | bytearray | memoryview[int] | None = ...,
+    flags: ImageConversionFlag = ...
+    ) -> bool: ...
+
+2026.08.19-13.06
+---------------------------------------------
+
+
+
 
 ================ TODO:
 gray out the split/teleport-injected qubits in the graphs

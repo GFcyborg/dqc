@@ -7,7 +7,7 @@ from itertools import combinations
 from typing import Any, Callable
 from io import BytesIO
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextFormat, QBrush, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QTextBrowser,
     QTextEdit,
@@ -267,7 +268,7 @@ def _wire_label(wire: Any) -> str:
     if register_name is not None and index is not None:
         suppress_scalar_zero_suffix = False
         try:
-            suppress_scalar_zero_suffix = int(register_size) == 1 and int(index) == 0 and bool(re.search(r"\d$", str(register_name)))
+            suppress_scalar_zero_suffix = register_size is not None and int(register_size) == 1 and int(index) == 0 and bool(re.search(r"\d$", str(register_name)))
         except Exception:
             suppress_scalar_zero_suffix = False
         if not suppress_scalar_zero_suffix:
@@ -372,7 +373,7 @@ class _DraggableChunkGroup(QGraphicsItemGroup):
 class ZoomableView(QGraphicsView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform | QPainter.TextAntialiasing)
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.TextAntialiasing)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -1234,7 +1235,10 @@ class ParseTreeView(QTreeWidget):
             if item.data(0, Qt.ItemDataRole.UserRole) is target:
                 return item
             for index in range(item.childCount()):
-                found = walk(item.child(index))
+                child = item.child(index)
+                if child is None:
+                    continue
+                found = walk(child)
                 if found is not None:
                     return found
             return None
@@ -2293,7 +2297,7 @@ class CircuitView(QWidget):
             self.show_message("No circuit available")
             return
         self._scene.clear()
-        figure = None
+        figure: Any = None
         try:
             from qiskit.visualization import circuit_drawer
 
@@ -2317,7 +2321,9 @@ class CircuitView(QWidget):
             # Tight bbox trims the large default white margins around the circuit image.
             figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0.04, dpi=140)
             pixmap = QPixmap()
-            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            # Let Qt auto-detect the format from the PNG magic bytes; passing
+            # a str/bytes format literal here doesn't match any PySide6 overload.
+            pixmap.loadFromData(buffer.getvalue())
             self._scene.addItem(QGraphicsPixmapItem(pixmap))
             self._scene.setSceneRect(self._scene.itemsBoundingRect())
             self.view.fit_scene()

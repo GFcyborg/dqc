@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import concurrent.futures
 import importlib
+import importlib.util
 import multiprocessing
 import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QImageReader, QKeySequence, QTextCursor
@@ -81,7 +83,7 @@ class ParameterDialog(QDialog):
             self._edits[name] = edit
             form.addRow(f"Parameter ({name}) := custom value", edit)
         layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -101,7 +103,7 @@ class DiagnosticsDialog(QDialog):
         self._browser.setOpenExternalLinks(True)
         self._browser.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard | Qt.TextInteractionFlag.LinksAccessibleByMouse)
         layout.addWidget(self._browser)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
@@ -111,7 +113,8 @@ class DiagnosticsDialog(QDialog):
         self._browser.setHtml(report)
 
     def _center(self) -> None:
-        target = self.parentWidget().screen() if self.parentWidget() and self.parentWidget().screen() else QApplication.primaryScreen()
+        parent = self.parentWidget()
+        target = parent.screen() if parent is not None and parent.screen() is not None else QApplication.primaryScreen()
         if target is None:
             return
         geometry = self.frameGeometry()
@@ -155,7 +158,7 @@ class TextSearchDialog(QDialog):
         buttons = QDialogButtonBox()
         previous_button = buttons.addButton("Previous", QDialogButtonBox.ButtonRole.ActionRole)
         next_button = buttons.addButton("Next", QDialogButtonBox.ButtonRole.ActionRole)
-        close_button = buttons.addButton(QDialogButtonBox.Close)
+        close_button = buttons.addButton(QDialogButtonBox.StandardButton.Close)
         previous_button.clicked.connect(self._emit_previous)
         next_button.clicked.connect(self._emit_next)
         close_button.clicked.connect(self.reject)
@@ -192,7 +195,7 @@ class MainWindow(QMainWindow):
         self.distributed_nodes = 3
         self._find_query = ""
         self._find_case_insensitive = True
-        self._find_matches: list[tuple[int, QWidget, QTextCursor]] = []
+        self._find_matches: list[tuple[int, Any, QTextCursor]] = []
         self._find_index = -1
         self._parameter_prompt_pending = False
         self._parameter_prompt_open = False
@@ -237,14 +240,21 @@ class MainWindow(QMainWindow):
         self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
         self._circuit_loading_indicator = QLabel("")
         self._circuit_loading_indicator.setVisible(False)
+        self._circuit_loading_indicator.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._circuit_loading_indicator.setStyleSheet("font-weight: 700; color: #1d4ed8; padding-left: 8px; padding-right: 8px;")
+        # Reserve enough width for the widest "Loading circuit <frame>" text so it
+        # never gets clipped when the Runtime header is squeezed by resizing.
+        widest_loading_text = "Loading circuit " + max(self._circuit_loading_frames, key=len)
+        self._circuit_loading_indicator.setMinimumWidth(
+            self._circuit_loading_indicator.fontMetrics().horizontalAdvance(widest_loading_text) + 20
+        )
         self._startup_graph_normalization_done = False
         self._thread_pool = QThreadPool(self)
         self._report_workers: list[ReportWorker] = []
         self._footer_label: QLabel | None = None
         self._ast_syncing = False
         self._ast_program: Any | None = None
-        self._ast_source_editor: QWidget | None = None
+        self._ast_source_editor: Any | None = None
         self.resize(1600, 1000)
         self._apply_style()
         self._build_ui()
@@ -303,7 +313,7 @@ class MainWindow(QMainWindow):
             QTabBar[dqcRewriteWarn="true"]::tab:last { color: #b91c1c; font-weight: 700; }
             QTabBar[dqcRewriteWarn="true"]::tab:last:selected { color: #b91c1c; font-weight: 700; }
             QSplitter::handle { background: rgba(96, 165, 250, 0.35); }
-            QPushButton { background: linear-gradient(to bottom, #eff6ff, #dbeafe); color: #0f172a; border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 6px 10px; }
+            QPushButton { background: linear-gradient(to bottom, #eff6ff, #dbeafe); color: #0f172a; border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 6px 10px; text-align: left; }
             QPushButton:hover { background: linear-gradient(to bottom, #dbeafe, #bfdbfe); }
             QLabel { color: #0f172a; }
             QMenuBar { background: #f8fbff; color: #0f172a; }
@@ -321,9 +331,9 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
-        top_split = QSplitter(Qt.Horizontal)
+        top_split = QSplitter(Qt.Orientation.Horizontal)
         top_split.setChildrenCollapsible(True)
-        outer_split = QSplitter(Qt.Vertical)
+        outer_split = QSplitter(Qt.Orientation.Vertical)
         outer_split.setChildrenCollapsible(True)
 
         self.code_tabs = QTabWidget()
@@ -420,7 +430,7 @@ class MainWindow(QMainWindow):
         self._runtime_output_min_height = min_runtime_height
         self.runtime_output.setMinimumHeight(self._runtime_output_min_height)
 
-        self.runtime_split = QSplitter(Qt.Vertical)
+        self.runtime_split = QSplitter(Qt.Orientation.Vertical)
         self.runtime_split.setChildrenCollapsible(True)
         self.runtime_split.addWidget(self.circuit_view)
         self.runtime_split.addWidget(self.runtime_output)
@@ -766,7 +776,7 @@ class MainWindow(QMainWindow):
             action.triggered.connect(handler)
             view_menu.addAction(action)
         self._find_action = QAction("Find ...", self)
-        self._find_action.setShortcut(QKeySequence.Find)
+        self._find_action.setShortcut(QKeySequence.StandardKey.Find)
         self._find_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self._find_action.triggered.connect(self.show_find_dialog)
         view_menu.addAction(self._find_action)
@@ -930,7 +940,7 @@ already declared in the surrounding chunk code.</p>
         browser.setHtml(html)
         layout.addWidget(browser)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Close, dlg)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
 
@@ -1015,7 +1025,7 @@ already declared in the surrounding chunk code.</p>
             if not required or (self.parameter_bindings and not force):
                 return
             dialog = ParameterDialog(required, self)
-            if dialog.exec() == QDialog.Accepted:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.parameter_bindings = dialog.values()
                 # Parameter-driven refresh is a runtime start path too.
                 # Mark it so the stopwatch appears immediately.
@@ -1167,10 +1177,10 @@ already declared in the surrounding chunk code.</p>
             return None
         return span
 
-    def _clamp_editor_pos(self, editor: QWidget, pos: int) -> int:
+    def _clamp_editor_pos(self, editor: Any, pos: int) -> int:
         return max(0, min(pos, max(0, editor.document().characterCount() - 1)))
 
-    def _span_point_to_pos(self, editor: QWidget, line_index: int, column: int, is_end: bool = False) -> int:
+    def _span_point_to_pos(self, editor: Any, line_index: int, column: int, is_end: bool = False) -> int:
         document = editor.document()
         block = document.findBlockByNumber(max(0, line_index))
         add = 1 if is_end else 0
@@ -1184,7 +1194,7 @@ already declared in the surrounding chunk code.</p>
             pos = column + add
         return self._clamp_editor_pos(editor, pos)
 
-    def _span_to_abs_range(self, editor: QWidget, span: Any) -> tuple[int, int]:
+    def _span_to_abs_range(self, editor: Any, span: Any) -> tuple[int, int]:
         start_line = int(getattr(span, "start_line", 1) or 1) - 1
         end_line = int(getattr(span, "end_line", 1) or 1) - 1
         start_col = int(getattr(span, "start_column", 0) or 0)
@@ -1203,7 +1213,7 @@ already declared in the surrounding chunk code.</p>
                 return token
         return ""
 
-    def _refine_span_range_for_node(self, editor: QWidget, node: Any, start: int, end: int) -> tuple[int, int]:
+    def _refine_span_range_for_node(self, editor: Any, node: Any, start: int, end: int) -> tuple[int, int]:
         token = self._node_sync_token(node)
         if not token:
             return start, end
@@ -1241,7 +1251,7 @@ already declared in the surrounding chunk code.</p>
             return start, end
         return nearest_start, min(len(text), nearest_start + len(token))
 
-    def _tree_node_at_cursor(self, editor: QWidget, program: Any) -> Any | None:
+    def _tree_node_at_cursor(self, editor: Any, program: Any) -> Any | None:
         cursor_pos = editor.textCursor().position()
         best_node = None
         best_size = None
@@ -1264,7 +1274,7 @@ already declared in the surrounding chunk code.</p>
             return
         self._sync_ast_from_editor(editor)
 
-    def _sync_ast_from_editor(self, editor: QWidget) -> None:
+    def _sync_ast_from_editor(self, editor: Any) -> None:
         if self._ast_syncing or self._ast_program is None:
             return
         if self._ast_source_editor is not None and editor is not self._ast_source_editor:
@@ -1590,11 +1600,11 @@ already declared in the surrounding chunk code.</p>
         return f"Distrib.QPUs ({self.distributed_nodes})"
 
     def zoom_active(self, delta: int) -> None:
-        widget = self.focusWidget()
+        widget: Any = self.focusWidget()
         if hasattr(widget, "zoom"):
             widget.zoom(delta)
             return
-        active_tab = self.code_tabs.currentWidget()
+        active_tab: Any = self.code_tabs.currentWidget()
         if hasattr(active_tab, "zoom"):
             active_tab.zoom(delta)
 
@@ -1603,11 +1613,11 @@ already declared in the surrounding chunk code.</p>
             if hasattr(widget, "reset_zoom"):
                 widget.reset_zoom()
 
-    def _searchable_views(self) -> list[tuple[int, QWidget]]:
+    def _searchable_views(self) -> list[tuple[int, Any]]:
         return [(0, self.original_editor), (2, self.rewritten_view)]
 
-    def _collect_matches(self, query: str, case_insensitive: bool = True) -> list[tuple[int, QWidget, QTextCursor]]:
-        matches: list[tuple[int, QWidget, QTextCursor]] = []
+    def _collect_matches(self, query: str, case_insensitive: bool = True) -> list[tuple[int, Any, QTextCursor]]:
+        matches: list[tuple[int, Any, QTextCursor]] = []
         if not query:
             return matches
         needle = query.lower() if case_insensitive else query
@@ -1629,7 +1639,7 @@ already declared in the surrounding chunk code.</p>
         matches.sort(key=lambda item: (item[0], item[2].selectionStart()))
         return matches
 
-    def _select_match(self, widget: QWidget, cursor: QTextCursor) -> None:
+    def _select_match(self, widget: Any, cursor: QTextCursor) -> None:
         if widget is self.original_editor:
             self.code_tabs.setCurrentIndex(0)
             self.original_editor.setTextCursor(cursor)
@@ -1702,11 +1712,11 @@ already declared in the surrounding chunk code.</p>
         spin.setValue(self.timeout_s)
         layout.addWidget(QLabel("Timeout in seconds (0 = no limit):"))
         layout.addWidget(spin)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.timeout_s = spin.value()
             self._update_runtime_menu_labels()
             if self.timeout_s == 0:
