@@ -1276,7 +1276,9 @@ DAG mouse-over feature is difficult to be used (as the wires are so tiny): make 
 manually translated qasm comments ita-to-eng in: deutsch-jozsa*
 2026.08.19-11.42
 ---------------------------------------------
-
+something must have gotten lost in the last refactoring: e.g. when unchecking rule #11 (split-gen.teleports) on adder.dqc, the rewritten code and its circuit drawing do update correctly, but the runtime output still shows the qubits injected by rule #11. Fix it (bring back the correct behavior, which was there before the refactoring); also, I need a test to always check that all the outputs/graphs (i.e. circuit drawing, runtime execution, DAG, qubit interaction, chunk dependencies, etc.) are actually based on the [same] rewritten code (when the "Use rewritten code" checkbox is checked, as it is by default). I expected such test to already be in place, actually, as I've already required it...
+2026.08.19-12.08
+---------------------------------------------
 
 ================ TODO:
 gray out the split/teleport-injected qubits in the graphs

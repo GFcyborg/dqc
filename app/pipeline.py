@@ -2685,12 +2685,12 @@ def rewrite_and_analyze(source: str, rules: list[RuleState], split_lines: set[in
     except Exception as exc:
         issues.append(RewriteSpan(1, source.splitlines()[0] if source.splitlines() else "", "", 0, f"Runtime execution failed: {exc}", kind="error"))
     
-    # Apply unconditional rules (#98, #99) to split_qasm as well (used by runtime when split files are present)
-    # Always apply in sequence to ensure consistency with final_rewritten_source
-    split_qasm_lines = normalize_lines(dqc_qasm)
-    split_qasm_lines = rewrite_restore_alias_concatenation(split_qasm_lines, spans)
-    split_qasm_lines = rewrite_comment_out_pragmas(split_qasm_lines, spans)
-    final_split_qasm = strip_internal_display_markers("\n".join(split_qasm_lines))
+    # split_qasm feeds both the circuit view and the async runtime executor
+    # (see main_window_clean._start_runtime_run); it must be identical to
+    # downstream_rewritten_source so unchecking rule 11 (or any other rule)
+    # is honored by the actual execution, not just by the Rewritten/circuit
+    # preview computed inline above.
+    final_split_qasm = downstream_rewritten_source
     
     return RewriteResult(source=source, rewritten_source=display_rewritten_source, spans=spans, issues=issues, parse_tree=parse_tree, circuit=circuit_result, counts=counts, duration_s=duration_s, split_source=dqc_source, split_qasm=final_split_qasm, chunk_flows=chunk_flows, chunk_graph=chunk_graph, interaction_graph=interaction_graph, dag_graph=dag_graph, ast_graph=nx.DiGraph(), suggested_split_points=suggested_split_points, suggestion_reason=suggestion_reason, fallback_events=sorted(fallback_events_set), runtime_backend=runtime_backend, runtime_note=runtime_note)
 
