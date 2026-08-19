@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _runtime_backend_fallback_line() -> str:
-        return "AER backends fallback: 1. MPS (Matrix Product State: chain of tensors); 2. default AER (monolithic state-vector)."
+        return "AER backends fallback: 1. my default (MPS (Matrix Product State): chain of tensors); 2. AER default (monolithic state-vector)."
 
     @staticmethod
     def _normalize_runtime_backend_label(runtime_backend: str) -> str:
@@ -1445,7 +1445,7 @@ already declared in the surrounding chunk code.</p>
                     self.runtime_output.setPlainText(
                         "Running simulation...\n"
                         f"{self._runtime_backend_fallback_line()}\n"
-                        "Current AER backend: MPS"
+                        "Using this AER-backend: MPS"
                     )
                     if start_runtime:
                         self._start_runtime_run(result, preferred_backend="MPS", retry_attempted=False)
@@ -1833,11 +1833,11 @@ already declared in the surrounding chunk code.</p>
         result.counts = counts or {}
         details: list[str] = [summary_text(result, self.shots)]
         details.append(self._runtime_backend_fallback_line())
-        details.append(f"Current AER backend: {self._normalize_runtime_backend_label(runtime_backend)}")
+        details.append(f"Using this AER-backend: {self._normalize_runtime_backend_label(runtime_backend)}")
         runtime_text = "\n\n".join(details)
         runtime_text = runtime_text.replace(
-            f"{self._runtime_backend_fallback_line()}\n\nCurrent AER backend:",
-            f"{self._runtime_backend_fallback_line()}\nCurrent AER backend:",
+            f"{self._runtime_backend_fallback_line()}\n\nUsing this AER-backend:",
+            f"{self._runtime_backend_fallback_line()}\nUsing this AER-backend:",
         )
         self.runtime_output.setPlainText(runtime_text)
         self._show_status_feedback("Simulation complete.")
@@ -1862,7 +1862,7 @@ already declared in the surrounding chunk code.</p>
                     self.runtime_output.setPlainText(
                         "Running simulation...\n"
                         f"{self._runtime_backend_fallback_line()}\n"
-                        "Current AER backend: monolithic"
+                        "Using this AER-backend: monolithic"
                     )
                     self._show_status_feedback("MPS timed out: retrying with monolithic backend.")
                     self._start_runtime_run(result, preferred_backend="monolithic", retry_attempted=True)

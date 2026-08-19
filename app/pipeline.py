@@ -12,6 +12,7 @@ from urllib.request import urlopen
 import importlib.metadata
 import json
 import math
+import os
 import re
 import time
 
@@ -2450,13 +2451,17 @@ def _is_aer_memory_error(exc: Exception) -> bool:
 def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int], str, str]:
     from qiskit_aer import AerSimulator
 
-    # Keep GUI responsive for large circuits by avoiding an initial run that can
-    # aggressively consume CPU/RAM (statevector). Prefer MPS first, then fall
-    # back to the default simulator if needed.
+    # Prefer MPS first, then fall back to the default simulator if needed.
+    # Let Aer use all locally available CPU cores to shorten runtime; Aer
+    # internally balances threads across experiments/shots/gates as needed.
+    try:
+        available_cores = len(os.sched_getaffinity(0))
+    except AttributeError:
+        available_cores = os.cpu_count() or 1
     backend_options = {
-        "max_parallel_threads": 1,
+        "max_parallel_threads": available_cores,
         "max_parallel_experiments": 1,
-        "max_parallel_shots": 1,
+        "max_parallel_shots": available_cores,
     }
     backends = [
         ("MPS", AerSimulator(method="matrix_product_state", **backend_options)),

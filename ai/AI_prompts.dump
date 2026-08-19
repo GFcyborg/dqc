@@ -1261,10 +1261,11 @@ the "unfold broadcast operations" rule (#10) expands reset q; into 4 per-qubit l
 ]
 2026.08.18-20.17
 ---------------------------------------------
-
-
+Let's do some tuning of AER backend runtime. I've noticed it runs only on 1 core of my multi-core CPU: if possible, make AER run on as many cores as possible (dynamically detect local CPU/cores availability), in order to shorten runtime. Then change AER runtime message, from "Current AER backend:" to "Using this AER-backend:"
+2026.08.19-10.47
+---------------------------------------------
 
 
 ================ TODO:
 translate qasm comments ita-to-eng in: deutsch-jozsa*
-simplify code
+reduce duplication and simplify code >> comment it >> document it
