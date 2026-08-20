@@ -6,11 +6,23 @@ from pathlib import Path
 from qiskit import QuantumCircuit
 from qiskit.circuit import ClassicalRegister, QuantumRegister
 
-from app.pipeline import ChunkFlow, DEFAULT_RULES, RuleState, build_chunk_dependency_graph, filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, rewrite_and_analyze, run_runtime_counts, split_points_from_source, suggest_split_points
+from app.pipeline import BYTES_PER_MEBIBYTE, ChunkFlow, DEFAULT_RULES, RuleState, aer_hardware_info, aer_memory_budget_mb, build_chunk_dependency_graph, filtered_split_points_from_source, line_is_inside_blocking_scope, parse_qiskit_with_pragma_resilience, qasm_token_graph, rewrite_and_analyze, run_runtime_counts, split_points_from_source, suggest_split_points
 from app.widgets import _has_split_generated_barriers, _split_generated_barrier_ordinals, _wire_label, collect_multi_qubit_interactions
 
 
 class PipelineRegressionTests(unittest.TestCase):
+    def test_aer_memory_budget_reserves_ten_percent_of_available_memory(self) -> None:
+        self.assertEqual(aer_memory_budget_mb(10 * BYTES_PER_MEBIBYTE), 9)
+
+    def test_aer_hardware_info_reports_memory_cpu_and_devices(self) -> None:
+        hardware = aer_hardware_info()
+
+        self.assertGreaterEqual(hardware["memory_total_mb"], hardware["memory_available_mb"])
+        self.assertEqual(hardware["aer_memory_budget_mb"], aer_memory_budget_mb(hardware["memory_available_mb"] * BYTES_PER_MEBIBYTE))
+        self.assertGreaterEqual(hardware["usable_logical_cpus"], 1)
+        self.assertTrue(hardware["aer_devices"])
+        self.assertEqual(hardware["aer_gpu_available"], "GPU" in hardware["aer_devices"])
+
     def test_parse_fallback_reports_concat_alias_normalization(self) -> None:
         source = "\n".join(
             [

@@ -46,6 +46,7 @@ from .pipeline import (
     RULE_ID_RESTORE_CONCAT,
     RULE_ID_SPLIT_GEN_TELEPORTS,
     RuleState,
+    aer_hardware_info,
     build_ast_graph,
     build_distributed_qasm,
     latest_versions_from_pypi,
@@ -704,7 +705,7 @@ class MainWindow(QMainWindow):
         lines.append("<p style='color:#475569'>Tip: use Runtime -> Diagnostics for global checks and smoke tests.</p>")
         return "".join(lines)
 
-    def _diagnostics_html(self, versions: dict[str, str], updates: dict[str, str], smoke: dict) -> str:
+    def _diagnostics_html(self, versions: dict[str, str], updates: dict[str, str], smoke: dict, hardware: dict) -> str:
         packages = self._all_bom_packages()
         lines = ["<h2 style='margin-top:0'>Diagnostics</h2>", "<p>Installed packages and update status:</p>", "<ul>"]
         for package in packages:
@@ -712,6 +713,14 @@ class MainWindow(QMainWindow):
         lines.append("</ul>")
         lines.append(self._render_bom_target_list_html())
         lines.append(self._render_import_health_html(packages))
+        devices = ", ".join(hardware["aer_devices"])
+        gpu_status = "available to Aer (the app currently uses Aer's default CPU device)" if hardware["aer_gpu_available"] else "unavailable (Aer reports CPU only)"
+        lines.append("<p><b>Local simulation resources:</b></p><ul>")
+        lines.append(f"<li>Host memory: {hardware['memory_total_mb']:,} MiB total; {hardware['memory_available_mb']:,} MiB currently available.</li>")
+        lines.append(f"<li>Aer max memory per run: {hardware['aer_memory_budget_mb']:,} MiB (90% of currently available memory; recalculated when a run starts).</li>")
+        lines.append(f"<li>CPU parallelism: {hardware['physical_cpus']} physical cores; Aer may use up to {hardware['usable_logical_cpus']} usable logical CPUs.</li>")
+        lines.append(f"<li>Aer devices: {devices}. GPU offload: {gpu_status}.</li>")
+        lines.append("</ul>")
         lines.append(f"<p>Smoke test (Hadamard gate, shots={self.shots}): duration {smoke['duration_s']:.3f}s, counts {smoke['counts']}</p>")
         return "".join(lines)
 
@@ -1911,7 +1920,8 @@ already declared in the surrounding chunk code.</p>
             versions = package_versions(packages)
             updates = latest_versions_from_pypi(packages)
             smoke = smoke_test_hadamard(self.shots)
-            return {"versions": versions, "updates": updates, "smoke": smoke}
+            hardware = aer_hardware_info()
+            return {"versions": versions, "updates": updates, "smoke": smoke, "hardware": hardware}
 
         def _done(payload: dict) -> None:
             if not payload.get("ok"):
@@ -1921,7 +1931,8 @@ already declared in the surrounding chunk code.</p>
             versions = result.get("versions", {})
             updates = result.get("updates", {})
             smoke = result.get("smoke", {"duration_s": 0.0, "counts": {}})
-            dialog.update_report(self._diagnostics_html(versions, updates, smoke))
+            hardware = result.get("hardware", {})
+            dialog.update_report(self._diagnostics_html(versions, updates, smoke, hardware))
 
         self._run_report_async(_task, _done)
         dialog.exec()

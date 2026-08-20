@@ -1,0 +1,146 @@
+/*
+ * mixing-all2.qasm
+ * Companion crash-test to mixing-all.qasm: this one specifically covers the
+ * qiskit-example.qasm-style expressions (input params, while loop, aliasing,
+ * chained indexing, gate modifiers) plus enough extra constructs to exercise
+ * every rewriting rule (#1-#10, #99), not just the ones already covered by
+ * mixing-all.qasm. No OPENQASM header and no stdgates include on purpose, so
+ * rules #3/#4 have something to inject.
+ * WARNING: if both input params (a, b) are left at 0, the while loop below
+ * never exits (measurement stays deterministically "00") -- this mirrors
+ * qiskit-example.qasm and is meant to exercise the runtime timeout guard.
+ * Total qubit count: 3+4+6+3 = 16.
+ */
+
+// two input parameters (rule #7/#8/#9 all interact with this block)
+input float[64] a;
+input float[64] b;
+
+qubit[3] q_qe;
+bit[2] mid;
+bit[3] out;
+
+// aliasing and re-aliasing (rule #8: inline let-aliases)
+let aliased = q_qe[0:1];
+
+gate my_gate(a, b) c, t {
+  gphase(a / 2);
+  ry(a) c;
+  rz(b) c;
+  cx c, t;
+}
+
+// gate modifiers (ctrl @ inv @ ...)
+gate my_phase(a) c {
+  ctrl @ inv @ gphase(a) c;
+}
+
+// chained indexing on top of an alias (rule #9: resolve chained indexing)
+my_gate(a * 2, b) aliased[0], q_qe[{1, 2}][0];
+measure q_qe[0] -> mid[0];
+measure q_qe[1] -> mid[1];
+
+// while loop that only terminates once a non-trivial rotation is applied;
+// with a=b=0 the qubits never leave |0>, so mid stays "00" forever
+while (mid == "00") {
+  reset q_qe[0];
+  reset q_qe[1];
+  my_gate(a, b) q_qe[0], q_qe[1];
+  my_phase(a - pi / 2) q_qe[1];
+  mid[0] = measure q_qe[0];
+  mid[1] = measure q_qe[1];
+}
+
+if (mid[0]) {
+  let inner_alias = q_qe[{0, 1}];
+  reset inner_alias;
+}
+
+out = measure q_qe;
+
+// --- custom gate colliding with a stdgates.inc name (rule #5) ---
+gate cphase(θ) x, y {
+  U(0, 0, θ / 2) x;
+  cx x, y;
+  U(0, 0, -θ / 2) y;
+  cx x, y;
+  U(0, 0, θ / 2) y;
+}
+
+qubit[4] q_b;
+bit c_b0;
+bit c_b1;
+bit c_b2;
+bit c_b3;
+uint[2] cnt = 2; // rule #7: uint workaround
+
+reset q_b; // rule #10: unfold broadcast reset
+h q_b[0];
+measure q_b[0] -> c_b0;
+if (c_b0 == 1) { rz(pi / 2) q_b[1]; }   // rule #6: bit-to-bool ("== 1")
+h q_b[1];
+measure q_b[1] -> c_b1;
+if (c_b0 == 1) { rz(pi / 4) q_b[2]; }
+if (c_b1 == 0) { x q_b[2]; }            // rule #6: bit-to-bool ("== 0")
+cphase(pi / 2) q_b[2], q_b[3];
+h q_b[2];
+measure q_b[2] -> c_b2;
+
+for uint i in [0: 1] {
+  if (bool(cnt[i])) x q_b[3];
+}
+
+h q_b[3];
+measure q_b[3] -> c_b3;
+
+// --- ripple-carry adder (2-bit), forward/backward for loops (rule #7) ---
+gate majority x, y, z {
+    cx z, y;
+    cx z, x;
+    ccx x, y, z;
+}
+
+gate unmaj x, y, z {
+    ccx x, y, z;
+    cx z, x;
+    cx x, y;
+}
+
+qubit[1] cin;
+qubit[2] aa;
+qubit[2] bb;
+qubit[1] cout;
+bit[3] ans;
+uint[2] a_in = 1; // aa = 01
+uint[2] b_in = 3; // bb = 11
+
+reset cin;
+reset aa;
+reset bb;
+reset cout;
+
+for uint i in [0: 1] {
+  if (bool(a_in[i])) x aa[i];
+  if (bool(b_in[i])) x bb[i];
+}
+
+majority cin[0], bb[0], aa[0];
+for uint i in [0: 0] { majority aa[i], bb[i + 1], aa[i + 1]; }
+cx aa[1], cout[0];
+for uint i in [0: -1: 0] { unmaj aa[i], bb[i + 1], aa[i + 1]; }
+unmaj cin[0], bb[0], aa[0];
+
+measure bb[0:1] -> ans[0:1]; // rule #10: unfold broadcast (array slice measure)
+measure cout[0] -> ans[2];
+
+// --- GHZ-style block with a standalone pragma (rule #99: no pragmas) ---
+qubit[3] q_extra;
+bit[3] c_extra;
+
+h q_extra[0];
+cx q_extra[0], q_extra[1];
+cx q_extra[1], q_extra[2];
+
+pragma dqc.test "informational pragma for rule #99 coverage";
+
+c_extra = measure q_extra; // rule #10: unfold broadcast (whole-register measure)

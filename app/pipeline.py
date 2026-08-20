@@ -86,6 +86,8 @@ SCALAR_BIT_DECL_PATTERN = re.compile(r"^(?P<indent>\s*)bit\s+(?P<name>[A-Za-z_][
 IF_SCALAR_BIT_COND_PATTERN = re.compile(r"^(?P<prefix>\s*if\s*\(\s*)(?P<expr>!?\s*[A-Za-z_][A-Za-z0-9_]*)(?P<suffix>\s*\)\s*.*)$")
 AUTO_PARAM_DEFAULT_EXPR = "pi/2 - 1"
 AUTO_PARAM_DEFAULT_VALUE = (math.pi / 2.0) - 1.0
+AER_MEMORY_FRACTION = 0.90
+BYTES_PER_MEBIBYTE = 1024 * 1024
 OPENQASM_3_1_HEADER_RE = re.compile(r"(?im)^\s*OPENQASM\s+3\.1\b")
 STDGATES_INCLUDE_RE = re.compile(r'(?im)^\s*include\s+"stdgates\.inc"\s*;\s*$')
 
@@ -2459,6 +2461,37 @@ def _is_aer_memory_error(exc: Exception) -> bool:
     )
 
 
+def aer_memory_budget_mb(available_bytes: int | None = None) -> int:
+    """Reserve 10% of currently available RAM for the GUI and operating system."""
+    if available_bytes is None:
+        import psutil
+
+        available_bytes = psutil.virtual_memory().available
+    return max(1, int(available_bytes * AER_MEMORY_FRACTION / BYTES_PER_MEBIBYTE))
+
+
+def aer_hardware_info() -> dict[str, Any]:
+    """Return the host and Aer capabilities that affect local simulation."""
+    import psutil
+    from qiskit_aer import AerSimulator
+
+    memory = psutil.virtual_memory()
+    try:
+        usable_logical_cpus = len(os.sched_getaffinity(0))
+    except AttributeError:
+        usable_logical_cpus = os.cpu_count() or 1
+    devices = tuple(str(device).upper() for device in AerSimulator().available_devices())
+    return {
+        "memory_total_mb": int(memory.total / BYTES_PER_MEBIBYTE),
+        "memory_available_mb": int(memory.available / BYTES_PER_MEBIBYTE),
+        "aer_memory_budget_mb": aer_memory_budget_mb(memory.available),
+        "physical_cpus": psutil.cpu_count(logical=False) or 0,
+        "usable_logical_cpus": usable_logical_cpus,
+        "aer_devices": devices,
+        "aer_gpu_available": "GPU" in devices,
+    }
+
+
 def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int], str, str]:
     from qiskit_aer import AerSimulator
 
@@ -2470,6 +2503,7 @@ def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: 
     except AttributeError:
         available_cores = os.cpu_count() or 1
     backend_options = {
+        "max_memory_mb": aer_memory_budget_mb(),
         "max_parallel_threads": available_cores,
         "max_parallel_experiments": 1,
         "max_parallel_shots": available_cores,
