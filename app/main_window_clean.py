@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import html
 import importlib
 import importlib.util
 import multiprocessing
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTabWidget,
     QTextBrowser,
+    QTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -69,7 +71,7 @@ from .pipeline import (
     validate_qcomm_template,
     write_text,
 )
-from .widgets import CircuitView, CodeEditor, DiagnosticsView, GraphTab, HtmlCodeView, ParseTreeView, RulePanel, QiskitDagTab, ChunkDagTab, QubitInteractionTab
+from .widgets import CircuitView, CodeEditor, DiagnosticsView, GraphTab, HtmlCodeView, ParseTreeView, RulePanel, QiskitDagTab, ChunkDagTab, QubitInteractionTab, runtime_measurement_html
 
 
 class ParameterDialog(QDialog):
@@ -421,9 +423,9 @@ class MainWindow(QMainWindow):
                 nodes_btn = btn
         self._runtime_buttons = (shots_btn, timeout_btn, nodes_btn)
         self.circuit_view = CircuitView()
-        self.runtime_output = QPlainTextEdit()
-        self.runtime_output.setReadOnly(True)
-        self.runtime_output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.runtime_output = QTextBrowser()
+        self.runtime_output.setOpenExternalLinks(False)
+        self.runtime_output.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.runtime_output.setFont(QFont("DejaVu Sans Mono", 10))
         self.runtime_output.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         min_runtime_lines = 7
@@ -721,6 +723,15 @@ class MainWindow(QMainWindow):
         lines.append(f"<li>CPU parallelism: {hardware['physical_cpus']} physical cores; Aer may use up to {hardware['usable_logical_cpus']} usable logical CPUs.</li>")
         lines.append(f"<li>Aer devices: {devices}. GPU offload: {gpu_status}.</li>")
         lines.append("</ul>")
+        lines.append(
+            "<p><b>Simulation noise:</b> runs use Aer's default noiseless simulators "
+            "(no gate-error/decoherence NoiseModel is configured), so the only source "
+            "of run-to-run variation in measurement counts is statistical shot-sampling "
+            "noise inherent to quantum measurement -- repeated runs of the same circuit "
+            "at the same shot count will show small fluctuations in each outcome's share "
+            "of shots, shrinking as shots increases (fluctuations scale roughly with "
+            "1/&radic;shots). This is expected and is not evidence of a bug.</p>"
+        )
         lines.append(f"<p>Smoke test (Hadamard gate, shots={self.shots}): duration {smoke['duration_s']:.3f}s, counts {smoke['counts']}</p>")
         return "".join(lines)
 
@@ -1851,15 +1862,10 @@ already declared in the surrounding chunk code.</p>
             self._show_status_feedback("Simulation failed.")
             return
         result.counts = counts or {}
-        details: list[str] = [summary_text(result, self.shots)]
-        details.append(self._runtime_backend_fallback_line())
-        details.append(f"Using this AER-backend: {self._normalize_runtime_backend_label(runtime_backend)}")
-        runtime_text = "\n\n".join(details)
-        runtime_text = runtime_text.replace(
-            f"{self._runtime_backend_fallback_line()}\n\nUsing this AER-backend:",
-            f"{self._runtime_backend_fallback_line()}\nUsing this AER-backend:",
-        )
-        self.runtime_output.setPlainText(runtime_text)
+        summary_html = runtime_measurement_html(result, self.shots)
+        fallback_html = html.escape(self._runtime_backend_fallback_line())
+        backend_html = html.escape(f"Using this AER-backend: {self._normalize_runtime_backend_label(runtime_backend)}")
+        self.runtime_output.setHtml(f"{summary_html}<br><br>{fallback_html}<br>{backend_html}")
         self._show_status_feedback("Simulation complete.")
 
     def _refresh_runtime_run_state(self) -> None:

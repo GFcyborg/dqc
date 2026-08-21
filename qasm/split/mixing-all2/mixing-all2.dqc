@@ -74,7 +74,6 @@ bit c_b2;
 bit c_b3;
 uint[2] cnt = 2; // rule #7: uint workaround
 
-pragma dqc.v1.split id=1
 reset q_b; // rule #10: unfold broadcast reset
 h q_b[0];
 measure q_b[0] -> c_b0;
@@ -91,7 +90,6 @@ for uint i in [0: 1] {
   if (bool(cnt[i])) x q_b[3];
 }
 
-pragma dqc.v1.split id=2
 h q_b[3];
 measure q_b[3] -> c_b3;
 
@@ -116,7 +114,6 @@ bit[3] ans;
 uint[2] a_in = 1; // aa = 01
 uint[2] b_in = 3; // bb = 11
 
-pragma dqc.v1.split id=3
 reset cin;
 reset aa;
 reset bb;
@@ -130,6 +127,9 @@ for uint i in [0: 1] {
 majority cin[0], bb[0], aa[0];
 for uint i in [0: 0] { majority aa[i], bb[i + 1], aa[i + 1]; }
 cx aa[1], cout[0];
+
+pragma dqc.v1.split id=1
+
 for uint i in [0: -1: 0] { unmaj aa[i], bb[i + 1], aa[i + 1]; }
 unmaj cin[0], bb[0], aa[0];
 
@@ -140,7 +140,6 @@ measure cout[0] -> ans[2];
 qubit[3] q_extra;
 bit[3] c_extra;
 
-pragma dqc.v1.split id=4
 h q_extra[0];
 cx q_extra[0], q_extra[1];
 cx q_extra[1], q_extra[2];

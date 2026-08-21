@@ -1,16 +1,19 @@
-OPENQASM 3.0;
+OPENQASM 3.1;
 include "stdgates.inc";
 qubit[4] q;
 bit[4] c;
-barrier q[0], q[1], q[2], q[3];
-x q[2];
-ctrl(3) @ x q[0], q[1], q[2], q[3];
-x q[2];
-barrier q[0], q[1], q[2], q[3];
+reset q[0];
+reset q[1];
+reset q[2];
+reset q[3];
 x q[0];
-x q[1];
 x q[2];
-ctrl(3) @ x q[0], q[1], q[2], q[3];
+barrier q[0], q[1], q[2], q[3];
+h q[0];
+cphase(pi / 2) q[1], q[0];
+h q[1];
+cphase(pi / 4) q[2], q[0];
+cphase(pi / 2) q[2], q[1];
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
@@ -77,18 +80,16 @@ telept_Xcorrect_q3_1 = measure q3_epr_1;
 if(telept_Zcorrect_q3_1) z q3_TO2;
 if(telept_Xcorrect_q3_1) x q3_TO2;
 // q[3] teleported into q3_TO2
-x q0_TO2;
-x q1_TO2;
-x q2_TO2;
-barrier q0_TO2, q1_TO2, q2_TO2, q3_TO2;
-x q0_TO2;
-x q2_TO2;
-ctrl(3) @ x q0_TO2, q1_TO2, q2_TO2, q3_TO2;
+h q2_TO2;
+cphase(pi / 8) q3_TO2, q0_TO2;
+cphase(pi / 4) q3_TO2, q1_TO2;
+cphase(pi / 2) q3_TO2, q2_TO2;
+h q3_TO2;
 /* Teleporting qubits into chunk 3:
- * q0_TO2 from chunks 1, 2
- * q1_TO2 from chunks 1, 2
- * q2_TO2 from chunks 1, 2
- * q3_TO2 from chunks 1, 2
+ * q0_TO2 from chunk 2
+ * q1_TO2 from chunk 2
+ * q2_TO2 from chunk 2
+ * q3_TO2 from chunk 2
  */
 qubit q0_TO2_epr_2;
 qubit q0_TO2_TO3;
@@ -150,13 +151,6 @@ telept_Xcorrect_q3_TO2_2 = measure q3_TO2_epr_2;
 if(telept_Zcorrect_q3_TO2_2) z q3_TO2_TO3;
 if(telept_Xcorrect_q3_TO2_2) x q3_TO2_TO3;
 // q3_TO2 teleported into q3_TO2_TO3
-x q0_TO2_TO3;
-x q2_TO2_TO3;
-barrier q0_TO2_TO3, q1_TO2_TO3, q2_TO2_TO3, q3_TO2_TO3;
-x q1_TO2_TO3;
-ctrl(3) @ x q0_TO2_TO3, q1_TO2_TO3, q2_TO2_TO3, q3_TO2_TO3;
-x q1_TO2_TO3;
-barrier q0_TO2_TO3, q1_TO2_TO3, q2_TO2_TO3, q3_TO2_TO3;
 c[0] = measure q0_TO2_TO3;
 c[1] = measure q1_TO2_TO3;
 c[2] = measure q2_TO2_TO3;

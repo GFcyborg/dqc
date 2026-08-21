@@ -725,6 +725,28 @@ def _parse_static_range(expr: str) -> list[int] | None:
     return list(range(start, end - 1, step))
 
 
+_INDEX_ARITHMETIC_PATTERN = re.compile(r"\[\s*(-?\d+)\s*([+-])\s*(\d+)\s*\]")
+
+
+def _fold_index_arithmetic(line: str) -> str:
+    """Fold simple constant index arithmetic left behind by loop-var substitution
+    (e.g. `b[i + 1]` with `i` replaced by `2` becomes `b[2 + 1]`) into a plain
+    literal index (`b[3]`). Without this, later teleport/alias renaming (which
+    matches by literal operand text, e.g. `b[3]` -> `b3_TO2`) silently misses
+    these still-unfolded expressions and keeps referencing the stale original
+    qubit, corrupting the computation (seen on adder.dqc's unrolled majority
+    loop under rule #11 teleportation)."""
+
+    def _replace(match: re.Match[str]) -> str:
+        base = int(match.group(1))
+        op = match.group(2)
+        offset = int(match.group(3))
+        value = base + offset if op == "+" else base - offset
+        return f"[{value}]"
+
+    return _INDEX_ARITHMETIC_PATTERN.sub(_replace, line)
+
+
 def _rewrite_uint_index_uses(line: str, uint_consts: dict[str, tuple[int, int]]) -> str:
     rewritten = line
     for name, (width, value) in uint_consts.items():
@@ -806,6 +828,7 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
                 emitted_lines: list[str] = []
                 for value in values:
                     expanded = re.sub(rf"\b{re.escape(loop_var)}\b", str(value), body)
+                    expanded = _fold_index_arithmetic(expanded)
                     expanded = _rewrite_uint_index_uses(expanded, uint_consts)
                     for out_line in _fold_if_const_bool(expanded):
                         if out_line.strip():
@@ -834,6 +857,7 @@ def rewrite_uint_to_int(lines: list[str], enabled: bool, spans: list[RewriteSpan
                 for value in values:
                     for body_line in body_lines:
                         expanded = re.sub(rf"\b{re.escape(loop_var)}\b", str(value), body_line)
+                        expanded = _fold_index_arithmetic(expanded)
                         expanded = _rewrite_uint_index_uses(expanded, uint_consts)
                         for out_line in _fold_if_const_bool(expanded):
                             if out_line.strip():
@@ -1376,12 +1400,23 @@ def resolve_split_anchors(lines: list[str]) -> tuple[list[str], set[int], dict[i
     clean_lines: list[str] = []
     resolved_split_lines: set[int] = set()
     old_to_new_line: dict[int, int] = {}
+    # Anchor positions must be counted in the same line-numbering space that
+    # add_split_markers() will later use, i.e. against rewritten_no_pragmas
+    # (literal "pragma dqc.v1.split id=N" lines stripped). Without excluding
+    # those from the count here too, any split boundary preceded by another
+    # split's own literal pragma line (e.g. a later chunk boundary) drifts by
+    # one line per preceding pragma, silently splitting one statement too
+    # late (seen corrupting bell_state.dqc's final teleport when rules #1/#2
+    # ran together with #10, shifting a broadcast-unfolded measurement).
+    non_pragma_count = 0
     for old_line_no, line in enumerate(lines, start=1):
         if DQC_SPLIT_ANCHOR_PATTERN.match(line):
-            resolved_split_lines.add(len(clean_lines) + 1)
+            resolved_split_lines.add(non_pragma_count + 1)
             continue
         clean_lines.append(line)
         old_to_new_line[old_line_no] = len(clean_lines)
+        if not DQC_PRAGMA_PATTERN.match(line):
+            non_pragma_count += 1
     return clean_lines, resolved_split_lines, old_to_new_line
 
 
@@ -1932,6 +1967,17 @@ def _stmt_read_write_names(stmt: Any) -> tuple[set[str], set[str]]:
             qubit_names |= _operand_identifier_names(qb)
         return qubit_names.copy(), qubit_names
 
+    if kind_name == "QuantumBarrier":
+        # A barrier is a same-chunk scheduling fence, not a data dependency: it
+        # must not pull qubits into a chunk (spuriously triggering rule #11
+        # teleportation) just because they happen to share a whole-register
+        # `barrier q;` with a qubit the chunk actually computes on. Without
+        # this, a qubit could get destructively teleported into a chunk that
+        # never really uses it, and then teleported *again* from the same
+        # (already-measured) original qubit for a later chunk that does use
+        # it, corrupting that qubit's final measurement (seen on rb.dqc).
+        return set(), set()
+
     if kind_name == "BranchingStatement":
         return _operand_identifier_names(getattr(stmt, "condition", None)), set()
 
@@ -2434,6 +2480,43 @@ def qasm_token_graph(source: str) -> tuple[nx.DiGraph, nx.Graph, nx.DiGraph]:
     return dag, interaction, chunk_graph
 
 
+def _flatten_simple_if_else_to_legacy_condition(circuit: Any):
+    """Work around an Aer 0.17.2 circuit-load crash (`_Map_base::at`), and the
+    silent result-corruption it can cause, triggered when a circuit combines a
+    measured multi-bit ClassicalRegister with 2+ different single-bit
+    ClassicalRegisters each used as an if_test/IfElseOp condition (exactly
+    rule #11's `telept_Zcorrect_*` / `telept_Xcorrect_*` correction pair
+    alongside any other multi-bit measured register, e.g. splittable.dqc,
+    adder.dqc, rb.dqc). Rewrite any IfElseOp whose body is a plain,
+    unconditioned single-instruction gate into the same instruction applied
+    directly with a legacy per-instruction `.condition`, sidestepping Aer's
+    modern-control-flow circuit-loading path where the bug lives.
+    See /memories/repo/testing.md for the root-cause writeup.
+    """
+    from qiskit.circuit.controlflow import IfElseOp
+
+    try:
+        new_circuit = circuit.copy_empty_like()
+        for instruction in circuit.data:
+            op = instruction.operation
+            if isinstance(op, IfElseOp) and op.blocks and len(op.blocks) == 1:
+                block = op.blocks[0]
+                body_instructions = list(block.data)
+                if len(body_instructions) == 1:
+                    inner = body_instructions[0]
+                    inner_condition = getattr(inner.operation, "condition", None)
+                    if inner_condition is None and not inner.clbits:
+                        mapped_qubits = [instruction.qubits[block.qubits.index(q)] for q in inner.qubits]
+                        mutable_op = inner.operation.to_mutable() if hasattr(inner.operation, "to_mutable") else inner.operation
+                        mutable_op.condition = op.condition
+                        new_circuit.append(mutable_op, mapped_qubits, [])
+                        continue
+            new_circuit.append(instruction)
+        return new_circuit
+    except Exception:
+        return circuit
+
+
 def _compile_for_aer_runtime(circuit: Any):
     from qiskit import transpile
 
@@ -2448,9 +2531,11 @@ def _compile_for_aer_runtime(circuit: Any):
         working_circuit = circuit
 
     try:
-        return transpile(working_circuit, optimization_level=0)
+        compiled = transpile(working_circuit, optimization_level=0)
     except Exception:
-        return working_circuit
+        compiled = working_circuit
+
+    return _flatten_simple_if_else_to_legacy_condition(compiled)
 
 
 def _is_aer_memory_error(exc: Exception) -> bool:
@@ -2808,6 +2893,38 @@ def smoke_test_hadamard(shots: int = 256) -> dict[str, Any]:
     duration_s = time.perf_counter() - started
     counts = dict(result.get_counts())
     return {"shots": shots, "duration_s": duration_s, "counts": counts, "circuit": circuit}
+
+
+# Rule #11's q-comm_template.qasm always names its two Bell-correction
+# classical registers "telept_Zcorrect_{qubit}_{split_id}" and
+# "telept_Xcorrect_{qubit}_{split_id}" (see QCOMM_TEMPLATE_REQUIRED_IDENTIFIERS
+# above); any clbit measured into one of these registers is therefore always
+# a throw-away/instrumental teleportation measurement, regardless of which
+# qubit-var it happened to measure.
+_TELEPORT_CORRECTION_CREG_RE = re.compile(r"^telept_[ZX]correct_")
+
+
+def teleport_correction_clbit_indices(circuit: Any) -> set[int]:
+    """Return clbit indices holding rule-#11 teleportation Bell-correction
+    measurements: throw-away/instrumental outcomes never carrying the "real"
+    final quantum state, regardless of the qubit-var name they measured.
+
+    Unlike tracking qubit-var lifecycle by name, this is immune to a qubit
+    being legitimately measured *before* it later becomes a teleport source
+    (e.g. a mid-circuit control-flow measurement), which would otherwise be
+    mis-flagged as a leftover.
+    """
+    if circuit is None:
+        return set()
+    indices: set[int] = set()
+    for index, clbit in enumerate(getattr(circuit, "clbits", [])):
+        try:
+            registers = circuit.find_bit(clbit).registers
+        except Exception:
+            continue
+        if registers and _TELEPORT_CORRECTION_CREG_RE.match(registers[0][0].name):
+            indices.add(index)
+    return indices
 
 
 def summary_text(result: RewriteResult, shots: int) -> str:

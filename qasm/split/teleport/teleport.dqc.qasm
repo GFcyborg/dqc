@@ -8,6 +8,11 @@ gate post q { }
 reset q[0];
 reset q[1];
 reset q[2];
+U(0.3, 0.2, 0.1) q[0];
+h q[1];
+cx q[1], q[2];
+barrier q[0], q[1], q[2];
+cx q[0], q[1];
 /* Teleporting qubits into chunk 2:
  * q[0] from chunk 1
  * q[1] from chunk 1
@@ -58,32 +63,14 @@ telept_Xcorrect_q2_1 = measure q2_epr_1;
 if(telept_Zcorrect_q2_1) z q2_TO2;
 if(telept_Xcorrect_q2_1) x q2_TO2;
 // q[2] teleported into q2_TO2
-U(0.3, 0.2, 0.1) q0_TO2;
-h q1_TO2;
-cx q1_TO2, q2_TO2;
-barrier q0_TO2, q1_TO2, q2_TO2;
-cx q0_TO2, q1_TO2;
 h q0_TO2;
 c0 = measure q0_TO2;
+c1 = measure q1_TO2;
+if(c0) z q2_TO2;
+if(c1) { x q2_TO2; }
 /* Teleporting qubits into chunk 3:
- * q1_TO2 from chunk 2
  * q2_TO2 from chunk 2
  */
-qubit q1_TO2_epr_2;
-qubit q1_TO2_TO3;
-bit telept_Zcorrect_q1_TO2_2;
-bit telept_Xcorrect_q1_TO2_2;
-reset q1_TO2_epr_2;
-reset q1_TO2_TO3;
-h q1_TO2_epr_2;
-cx q1_TO2_epr_2, q1_TO2_TO3;
-cx q1_TO2, q1_TO2_epr_2;
-h q1_TO2;
-telept_Zcorrect_q1_TO2_2 = measure q1_TO2;
-telept_Xcorrect_q1_TO2_2 = measure q1_TO2_epr_2;
-if(telept_Zcorrect_q1_TO2_2) z q1_TO2_TO3;
-if(telept_Xcorrect_q1_TO2_2) x q1_TO2_TO3;
-// q1_TO2 teleported into q1_TO2_TO3
 qubit q2_TO2_epr_2;
 qubit q2_TO2_TO3;
 bit telept_Zcorrect_q2_TO2_2;
@@ -99,8 +86,5 @@ telept_Xcorrect_q2_TO2_2 = measure q2_TO2_epr_2;
 if(telept_Zcorrect_q2_TO2_2) z q2_TO2_TO3;
 if(telept_Xcorrect_q2_TO2_2) x q2_TO2_TO3;
 // q2_TO2 teleported into q2_TO2_TO3
-c1 = measure q1_TO2_TO3;
-if(c0) z q2_TO2_TO3;
-if(c1) { x q2_TO2_TO3; }
 post q2_TO2_TO3;
 c2 = measure q2_TO2_TO3;

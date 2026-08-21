@@ -1349,7 +1349,39 @@ How big is max_memory_mb now? Is it possible to raise max_memory_mb to 90% of av
 add memory (and possibly hw-support, e.g. GPU offload) information to the diagnostic dialog.
 2026.08.20-18.53
 ---------------------------------------------
+Now we'll focus only on a new visual marking of [the measurement outcomes in] AER runtime output, so you should not change the core business logic or semantics of the app, but - in order to inject such marking in a meaningful way - you need to track qubit-vars lifecycle when they interact with rule #11 (split-gen. teleports), so there is a risk of breaking the process you are observing: make sure your tracking does not break the existing app logic (which is working).
+When using split pragmas (in *.dqc files, or manually injected in live *.qasm), the user needs to visually tell apart, in AER runtime output, which qubit-vars [measurements] are actually holding the relevant quantum states, and which qubit-vars are instead just throwaway leftovers of rule #11 (split-generated teleportations), e.g.: in qiskit-example.dqc q[1] quantum-state gets teleported several times across code-chunks/QPUs, until it gets to the final qubit q1_TO2_TO3_TO4, which then gets measured in the rewritten code (while, in the original code, it's q[1] that gets measured at the end). In this example, after rule #11 is applied, q[1] becomes a dead leftover, while q1_TO2_TO3_TO4 becomes the real object of interest, which actually received the original quantum state, which we want to measure at the end. They (q[1] and q1_TO2_TO3_TO4) both got measured, so you need to distinguish the measurements that count, from those that are merely instrumental for teleportation purposes.
+This visual marking of the runtime outputs should be: coloring the throw-away qubits with the same orange color used for rule#11-rewritten teleportations, while marking the remaining/important qubit measurement outcomes in bold text (leaving their color as it is now, i.e. just default black).
+2026.08.21-13.52
+---------------------------------------------
+AER output marking is almost OK, but it fails on a few cases, so it must be fixed (without breaking the good work). Find the error by checking that the number of relevant qubits should not change when rule #11 (split-gen. teleports) is applied, as each qubit teleportation injects 2 new qubits, but also throws away 2 qubits, so that the relevant qubits balance does not change. Instead I've noticed: e.g. adder.dqc and qiskit-example.dqc examples do not preserve such number of relevant measurements when toggling rule #11 (adder.dqc uses 5 measurements when rule #11 is OFF, but when it's ON there are 7 marked in bold, so the marking logic is wrongly selecting 2 more qubits).
+Also: use timers when spawning AER instances in your computations: I've had to kill your last run, that probably got stuck in an infinite loop (with 100% cpu load).
+2026.08.21-14.42 (undone due to infinite loop)
+2026.08.21-15.14
+---------------------------------------------
+OK, the marking is now rule#11-robust, but something broke: e.g. splittable.dqc now does not compute in AER (but circuit drawing is ok), and shows error message:
+    No measurement counts returned.
+2026.08.21-15.56 (UNDONE after next step: results are now changing after rule#11)
+
+don´t change anything now, just document better and more concisely the bug you have just found. I'll then undo last changes (which have broken the app), but I'll' keep the important information about this bug, for you to workaround it, once the breaking changes will be fixed.
+[answer:
+Documented — no code changes made. The bug knowledge (trigger conditions, proven workaround, and gotchas) is now recorded in /memories/repo/testing.md under a clearly-marked "NOT YET FIXED IN CODE" section, so it can be re-applied once you've sorted out the reverted breaking changes.]
+2026.08.21-16.22 (UNDONE)
+---------------------------------------------
+Ok, now the number of relevant qubits is fixed/preserved across rule #11 toggling, but there is another problem there (on rule #11 toggling on *.dqc examples): the readings of the relevant measurements should also be almost (*) the same.
+(*) I'm saying "almost the same", because quantum readings are inherently probabilistic by nature, and AER is correctly introducing such fluctuations in its simulations when running quantum circuits, so you cannot test for perfect match across different runs (you must accept some level of noise in quantum measurements: check how noisy is current AER configuration, and add this information in the diagnostics).
+But, even after accepting some minor mismatches in the readings, still I've noticed result mismatches (on rule #11 toggling) in the following examples: adder.dqc, rb.dqc. The other examples work just fine in the app (don't break them!).
+Also: splittable.dqc is hitting a bug of AER 0.17.2, which must be worked around (check your memories about it: /memories/repo/testing.md ); error message is: 'No measurement counts returned'.
+2026.08.21-17.59
+---------------------------------------------
+
+
 
 ================ TODO:
+qiskit-example.dqc is not preserving results across rule#11-togglings. all other examples work well in the app (don't break them).
+
+when saving to *.dqc, the content of the *.dqc.qasm should match the content of the rewritten code of that *.dqc file (so it depends also on which rewriting rules are active at save time).
+
 gray out the split/teleport-injected qubits in the graphs
+
 add a coherence check, matching original and distributed execution results

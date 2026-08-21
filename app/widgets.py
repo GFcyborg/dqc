@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import math
 import re
 import textwrap
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL, RULE_ID_BYPASS_ALL, RULE_ID_RESTORE_CONCAT, RULE_ID_SPLIT_GEN_TELEPORTS
+from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL, RULE_ID_BYPASS_ALL, RULE_ID_RESTORE_CONCAT, RULE_ID_SPLIT_GEN_TELEPORTS, summary_text, teleport_correction_clbit_indices
 
 # Semantic colors shared across the rewritten-code view, teleport/split
 # highlighting, and circuit label styling; kept in one place so all
@@ -48,6 +49,55 @@ COLOR_CLBIT_LABEL_MUTED = "#64748b"   # classical-bit labels (muted, non-bold)
 # A bare `barrier;` or `barrier q, r;` statement (used to detect the
 # orange split-generated barriers injected around teleport blocks).
 _BARRIER_LINE_RE = re.compile(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$")
+
+# Matches summary_text()'s "  {reading:<8} -> {occurrences} (...)" lines.
+# ``reading`` (a qiskit counts key) may itself contain spaces separating
+# multiple classical registers (e.g. "1 0 110"), so match everything up to
+# the literal " -> " marker rather than stopping at the first space.
+_READING_LINE_RE = re.compile(r"^(  )(.+?)( -> .*)$")
+
+
+def runtime_measurement_html(result: Any, shots: int) -> str:
+    """HTML rendering of summary_text() marking rule-#11 teleportation
+    Bell-correction measurements vs. the qubit-var measurements actually
+    holding the final quantum state.
+
+    Throw-away teleportation-correction bits (rule #11's telept_Zcorrect/
+    telept_Xcorrect clbits) are colored the same orange used for
+    teleportation rewrites elsewhere in the UI; every other measurement
+    stays default-colored but is rendered in bold. When there are no such
+    correction bits (rule #11 inactive, or no splits), the text is rendered
+    unchanged.
+    """
+    text = summary_text(result, shots)
+    correction_clbit_indices = teleport_correction_clbit_indices(getattr(result, "circuit", None))
+
+    html_lines: list[str] = []
+    for line in text.splitlines():
+        match = _READING_LINE_RE.match(line) if correction_clbit_indices else None
+        if not match:
+            html_lines.append(html.escape(line))
+            continue
+        prefix, reading, suffix = match.groups()
+        # Spaces in ``reading`` are register separators/right-padding, not
+        # bit positions; only "0"/"1" characters map to clbits, in the
+        # standard qiskit MSB-first order (leftmost bit char = highest clbit).
+        bit_count = sum(1 for char in reading if char in "01")
+        chars_html: list[str] = []
+        bit_position = 0
+        for char in reading:
+            if char not in "01":
+                chars_html.append(html.escape(char))
+                continue
+            clbit_index = bit_count - 1 - bit_position
+            bit_position += 1
+            if clbit_index in correction_clbit_indices:
+                chars_html.append(f"<span style='color:{COLOR_TELEPORT_ORANGE}'>{char}</span>")
+            else:
+                chars_html.append(f"<b>{char}</b>")
+        html_lines.append(f"{html.escape(prefix)}{''.join(chars_html)}{html.escape(suffix)}")
+    body = "<br>".join(html_lines)
+    return f"<pre style=\"margin:0; font-family:'DejaVu Sans Mono', monospace; font-size:10pt;\">{body}</pre>"
 
 
 def _add_selectable_scene_text(scene: QGraphicsScene, text: str, color: QColor, font: QFont | None = None):
