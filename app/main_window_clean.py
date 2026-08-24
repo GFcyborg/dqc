@@ -1550,6 +1550,7 @@ already declared in the surrounding chunk code.</p>
             self.original_editor.setFocus()
 
     def _persist_split_artifacts(self) -> Path | None:
+        self._flush_pending_refresh()
         active_split_points = filtered_split_points_from_source(self.current_source)
         if not active_split_points:
             return None
@@ -1565,6 +1566,16 @@ already declared in the surrounding chunk code.</p>
         write_text(qasm_dump_path, expected_qasm_dump)
         self._assert_saved_qasm_dump_matches_rewritten_view(qasm_dump_path, expected_qasm_dump)
         return dqc_path
+
+    def _flush_pending_refresh(self) -> None:
+        # A live code edit debounces `refresh()` by 250ms (`_schedule_refresh`),
+        # so `_latest_result`/`rewritten_text()` can be stale for up to that
+        # long after typing. Force a synchronous refresh here (without kicking
+        # off a runtime run) so the saved .dqc.qasm always reflects the exact
+        # live original-code text and active rule set at save time.
+        if self._refresh_timer.isActive():
+            self._refresh_timer.stop()
+            self.refresh(start_runtime=False)
 
     def _assert_saved_qasm_dump_matches_rewritten_view(self, qasm_dump_path: Path, expected_qasm_dump: str) -> None:
         saved_qasm_dump = read_text(qasm_dump_path)

@@ -21,6 +21,16 @@ This covers three separate bugs found and fixed together (2026-08-21):
    broadcast-unfolded statement (e.g. `c = measure q;` -> two lines) in the
    wrong place (bell_state.dqc, and any multi-split circuit combined with
    rules #1+#2 dropping comments/blanks alongside #10's broadcast unfolding).
+4. The Aer 0.17.2 crash workaround (`_flatten_simple_if_else_to_legacy_condition`,
+   see below) silently corrupted results when the circuit ALSO contained a
+   `while` loop (a WhileLoopOp): partially flattening only the teleport
+   correction IfElseOps while leaving the WhileLoopOp as modern control flow
+   made Aer randomize the flattened corrections instead of applying them
+   correctly (mixing-all2.dqc). Fixed by skipping the entire flatten pass
+   whenever the circuit contains any control-flow op the pass can't itself
+   flatten (WhileLoopOp, ForLoopOp, SwitchCaseOp, or a "complex" IfElseOp),
+   since Aer handles an all-modern or all-simple-flattened circuit correctly,
+   but not a mix of the two.
 
 Also guards the Aer 0.17.2 workaround (`_flatten_simple_if_else_to_legacy_condition`)
 that both prevents the historical `_Map_base::at` circuit-load crash and (it
@@ -70,6 +80,24 @@ def _real_bit_distribution(counts: dict[str, int], circuit) -> Counter:
         total_bits = len(bits)
         kept = [ch for pos, ch in enumerate(bits) if (total_bits - 1 - pos) not in correction_indices]
         dist["".join(kept)] += occurrences
+    return dist
+
+
+def _named_register_readings(counts: dict[str, int], circuit, register_name: str) -> Counter:
+    """Collapse a counts dict down to just the bits of one named classical
+    register (e.g. "ans"), keyed by that register's own bit string."""
+    indices: list[int] = []
+    for index, clbit in enumerate(getattr(circuit, "clbits", [])):
+        registers = circuit.find_bit(clbit).registers
+        if registers and registers[0][0].name == register_name:
+            indices.append(index)
+    indices.sort()
+    dist: Counter = Counter()
+    for reading, occurrences in counts.items():
+        bits = [ch for ch in reading if ch in "01"]
+        total_bits = len(bits)
+        kept = "".join(bits[total_bits - 1 - i] for i in reversed(indices))
+        dist[kept] += occurrences
     return dist
 
 
@@ -133,6 +161,22 @@ class Rule11MeasurementConsistencyTests(unittest.TestCase):
             result = _run("splittable", split_gen_teleports_enabled=enabled, shots=500)
             self.assertFalse(result.issues, [i.message for i in result.issues])
             self.assertTrue(result.counts, f"splittable (rule 11 {enabled}) returned no measurement counts")
+
+    def test_mixing_all2_matches_across_rule_11_toggle(self) -> None:
+        # Regression for a `while` loop elsewhere in the circuit silently
+        # corrupting rule #11's flattened teleport corrections (see bug 4
+        # above). Only the ripple-carry adder's "ans" register is checked
+        # here (not the whole circuit): mixing-all2.dqc also contains a
+        # genuinely random `while` loop and Hadamard-based measurements
+        # (c_b0-c_b3) elsewhere, so a full-distribution comparison would
+        # fail regardless of rule #11. With a_in=1, b_in=3 fixed in the
+        # source, "ans" (bb + cout, the adder's sum) must always read "100".
+        for enabled in (True, False):
+            result = _run("mixing-all2", split_gen_teleports_enabled=enabled, shots=300)
+            self.assertFalse(result.issues, [i.message for i in result.issues])
+            self.assertTrue(result.counts, f"mixing-all2 (rule 11 {enabled}) returned no measurement counts")
+            ans_dist = _named_register_readings(result.counts, result.circuit, "ans")
+            self.assertEqual(set(ans_dist), {"100"}, f"mixing-all2 (rule 11 {enabled}): unexpected 'ans' readings {ans_dist}")
 
 
 if __name__ == "__main__":

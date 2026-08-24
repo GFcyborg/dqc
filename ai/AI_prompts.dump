@@ -1374,14 +1374,42 @@ But, even after accepting some minor mismatches in the readings, still I've noti
 Also: splittable.dqc is hitting a bug of AER 0.17.2, which must be worked around (check your memories about it: /memories/repo/testing.md ); error message is: 'No measurement counts returned'.
 2026.08.21-17.59
 ---------------------------------------------
+Let's call "relevant" the qubits that are not dead leftovers from rule-#11 teleportations.
+In most of the *.dqc examples, rule#11 toggling does correctly preserve the amount of the relevant qubits and those measurements/readings that are supposed to get fixed-results (not all relevant qubits are supposed get fixed-results). Such preservation of fixed-results (after rule-#11 teleportations) in runtime output is the overall goal of the app, so it must be taken with max care.
+Nevertheless, in 2 examples, rule #11 is not preserving the fixed-results of relevant qubits readings, e.g. mixing-all2.dqc (here I'm comparing 2 groups of 4 readings taken by toggling rule #11, first OFF and then ON ):
 
+rule #11 toggled OFF, where the reference fixed-results are the "100" part:
+111 100 0 0 1 0 000 11 -> 44 (4.30%)
+000 100 0 0 0 0 000 11 -> 43 (4.20%)
+111 100 0 1 0 0 000 11 -> 43 (4.20%)
+000 100 1 1 1 0 000 11 -> 40 (3.91%)
+
+- VS -
+
+rule #11 toggled ON, mismatching the above reference fixed-results (I marked the likely-corresponding readings with stars, like this *XXX* ):
+000 1 0 1 1 0 1 0 0 1 0 0 0 *110* 1 0 1 1 000 11 -> 2 (0.20%)
+000 0 1 0 0 1 0 1 1 0 0 1 0 *010* 1 0 1 1 000 11 -> 2 (0.20%)
+000 1 1 0 1 0 0 1 1 1 1 0 0 *111* 1 0 1 1 000 11 -> 2 (0.20%)
+111 1 0 0 0 1 0 1 0 0 1 0 0 *110* 0 0 1 0 000 11 -> 2 (0.20%)
+
+The only other example not working is qiskit-example.dqc (using param a := (pi/2 - 1) ), whose relevant readings of toggled-ON rule#11 are not matching the corresponding fixed-results readings of toggled-OFF rule #11 ( being "000 11" when param a=(pi/2 - 1) ).
+It is important that you don´t break the app, which is working correctly in most of the examples: you have to fix the problem chirugically, troubleshooting the pointed-out cases!
+Don't guess: if you need more information, ask!
+2026.08.24-9.21     (UNDONE due to undue collapsing of spaces on the chat, causing wrong markings)
+2026.08.24-9.35     (UNDONE due to my faulty wording)
+2026.08.24-9.52
+---------------------------------------------
+when saving split chunks (to *.dqc), the content of the *.dqc.qasm should match the live content of the rewritten code of that *.dqc file (so *.dqc.qasm would depend on which rewriting rules are active at save time).
+2026.08.24-10.29 (Sorry, no response: try again)
+2026.08.24-10.33
+---------------------------------------------
 
 
 ================ TODO:
-qiskit-example.dqc is not preserving results across rule#11-togglings. all other examples work well in the app (don't break them).
+This todo has been created by Copilot: to be verified (I didn´t see it happening, actually, but let´s dig it).
 
-when saving to *.dqc, the content of the *.dqc.qasm should match the content of the rewritten code of that *.dqc file (so it depends also on which rewriting rules are active at save time).
+Root-caused and fixed the mixing-all2.dqc fixed-results mismatch: the Aer 0.17.2 crash workaround (`_flatten_simple_if_else_to_legacy_condition`) only flattens rule #11's simple Z/X teleport-correction if-blocks to legacy conditions, leaving everything else as modern control flow; when the circuit ALSO contains a `while` loop, this partial flattening made Aer silently randomize the flattened corrections (confirmed via a minimal hand-written repro isolating adder+teleport code with/without a while loop). Fixed by skipping the flatten pass entirely whenever the circuit contains any control-flow op it can't itself flatten (WhileLoopOp/ForLoopOp/SwitchCaseOp/complex IfElseOp) -- verified this doesn't reintroduce the original crash on splittable.dqc. Added regression test test_mixing_all2_matches_across_rule_11_toggle.
+qiskit-example.dqc turned out NOT to reproduce this same corruption right now: its 2nd split point currently injects ZERO teleports at all (dependency analysis reports "no shared qubits", likely because the split pragma lands inside an `if (mid[0]) { reset inner_alias; }` block after rule #10's broadcast-unfold, breaking that chunk's parse and silently falling back). That's a separate, still-open dependency-detection bug -- since nothing gets teleported there, toggling rule #11 currently has no effect on it (trivially "matching"), which isn't the same as it being correctly handled. Left as a follow-up TODO below.
+2026.08.24-(latest)
 
-gray out the split/teleport-injected qubits in the graphs
-
-add a coherence check, matching original and distributed execution results
+qiskit-example.dqc's 2nd split point injects no teleports at all (dependency analysis silently falls back to "no shared qubits", likely due to the split pragma landing inside an if-block's broadcast-unfolded body and breaking that chunk's parse) -- investigate and fix so q[0..2] actually gets teleported into chunk 3 as expected.

@@ -31,19 +31,14 @@ reset cout;
   x b[2];
   x b[3];
 majority cin[0], b[0], a[0];
-majority a[0], b[0 + 1], a[0 + 1];
-majority a[1], b[1 + 1], a[1 + 1];
-majority a[2], b[2 + 1], a[2 + 1];
 /* Teleporting qubits into chunk 2:
  * a[0] from chunk 1
  * a[1] from chunk 1
  * a[2] from chunk 1
  * a[3] from chunk 1
- * b[0] from chunk 1
  * b[1] from chunk 1
  * b[2] from chunk 1
  * b[3] from chunk 1
- * cin[0] from chunk 1
  * cout[0] from chunk 1
  */
 qubit a0_epr_1;
@@ -106,21 +101,6 @@ telept_Xcorrect_a3_1 = measure a3_epr_1;
 if(telept_Zcorrect_a3_1) z a3_TO2;
 if(telept_Xcorrect_a3_1) x a3_TO2;
 // a[3] teleported into a3_TO2
-qubit b0_epr_1;
-qubit b0_TO2;
-bit telept_Zcorrect_b0_1;
-bit telept_Xcorrect_b0_1;
-reset b0_epr_1;
-reset b0_TO2;
-h b0_epr_1;
-cx b0_epr_1, b0_TO2;
-cx b[0], b0_epr_1;
-h b[0];
-telept_Zcorrect_b0_1 = measure b[0];
-telept_Xcorrect_b0_1 = measure b0_epr_1;
-if(telept_Zcorrect_b0_1) z b0_TO2;
-if(telept_Xcorrect_b0_1) x b0_TO2;
-// b[0] teleported into b0_TO2
 qubit b1_epr_1;
 qubit b1_TO2;
 bit telept_Zcorrect_b1_1;
@@ -166,21 +146,6 @@ telept_Xcorrect_b3_1 = measure b3_epr_1;
 if(telept_Zcorrect_b3_1) z b3_TO2;
 if(telept_Xcorrect_b3_1) x b3_TO2;
 // b[3] teleported into b3_TO2
-qubit cin0_epr_1;
-qubit cin0_TO2;
-bit telept_Zcorrect_cin0_1;
-bit telept_Xcorrect_cin0_1;
-reset cin0_epr_1;
-reset cin0_TO2;
-h cin0_epr_1;
-cx cin0_epr_1, cin0_TO2;
-cx cin[0], cin0_epr_1;
-h cin[0];
-telept_Zcorrect_cin0_1 = measure cin[0];
-telept_Xcorrect_cin0_1 = measure cin0_epr_1;
-if(telept_Zcorrect_cin0_1) z cin0_TO2;
-if(telept_Xcorrect_cin0_1) x cin0_TO2;
-// cin[0] teleported into cin0_TO2
 qubit cout0_epr_1;
 qubit cout0_TO2;
 bit telept_Zcorrect_cout0_1;
@@ -196,13 +161,130 @@ telept_Xcorrect_cout0_1 = measure cout0_epr_1;
 if(telept_Zcorrect_cout0_1) z cout0_TO2;
 if(telept_Xcorrect_cout0_1) x cout0_TO2;
 // cout[0] teleported into cout0_TO2
+majority a0_TO2, b1_TO2, a1_TO2;
+majority a1_TO2, b2_TO2, a2_TO2;
+majority a2_TO2, b3_TO2, a3_TO2;
 cx a3_TO2, cout0_TO2;
-unmaj a2_TO2,b[2+1],a[2+1];
-unmaj a1_TO2,b[1+1],a[1+1];
-unmaj a0_TO2,b[0+1],a[0+1];
-unmaj cin0_TO2, b0_TO2, a0_TO2;
-measure b0_TO2 -> ans[0];
-measure b1_TO2 -> ans[1];
-measure b2_TO2 -> ans[2];
-measure b3_TO2 -> ans[3];
-measure cout0_TO2 -> ans[4];
+unmaj a2_TO2,b3_TO2,a3_TO2;
+unmaj a1_TO2,b2_TO2,a2_TO2;
+unmaj a0_TO2,b1_TO2,a1_TO2;
+/* Teleporting qubits into chunk 3:
+ * a0_TO2 from chunk 2
+ * b[0] from chunk 1
+ * b1_TO2 from chunk 2
+ * b2_TO2 from chunk 2
+ * b3_TO2 from chunk 2
+ * cin[0] from chunk 1
+ * cout0_TO2 from chunk 2
+ */
+qubit a0_TO2_epr_2;
+qubit a0_TO2_TO3;
+bit telept_Zcorrect_a0_TO2_2;
+bit telept_Xcorrect_a0_TO2_2;
+reset a0_TO2_epr_2;
+reset a0_TO2_TO3;
+h a0_TO2_epr_2;
+cx a0_TO2_epr_2, a0_TO2_TO3;
+cx a0_TO2, a0_TO2_epr_2;
+h a0_TO2;
+telept_Zcorrect_a0_TO2_2 = measure a0_TO2;
+telept_Xcorrect_a0_TO2_2 = measure a0_TO2_epr_2;
+if(telept_Zcorrect_a0_TO2_2) z a0_TO2_TO3;
+if(telept_Xcorrect_a0_TO2_2) x a0_TO2_TO3;
+// a0_TO2 teleported into a0_TO2_TO3
+qubit b0_epr_2;
+qubit b0_TO3;
+bit telept_Zcorrect_b0_2;
+bit telept_Xcorrect_b0_2;
+reset b0_epr_2;
+reset b0_TO3;
+h b0_epr_2;
+cx b0_epr_2, b0_TO3;
+cx b[0], b0_epr_2;
+h b[0];
+telept_Zcorrect_b0_2 = measure b[0];
+telept_Xcorrect_b0_2 = measure b0_epr_2;
+if(telept_Zcorrect_b0_2) z b0_TO3;
+if(telept_Xcorrect_b0_2) x b0_TO3;
+// b[0] teleported into b0_TO3
+qubit b1_TO2_epr_2;
+qubit b1_TO2_TO3;
+bit telept_Zcorrect_b1_TO2_2;
+bit telept_Xcorrect_b1_TO2_2;
+reset b1_TO2_epr_2;
+reset b1_TO2_TO3;
+h b1_TO2_epr_2;
+cx b1_TO2_epr_2, b1_TO2_TO3;
+cx b1_TO2, b1_TO2_epr_2;
+h b1_TO2;
+telept_Zcorrect_b1_TO2_2 = measure b1_TO2;
+telept_Xcorrect_b1_TO2_2 = measure b1_TO2_epr_2;
+if(telept_Zcorrect_b1_TO2_2) z b1_TO2_TO3;
+if(telept_Xcorrect_b1_TO2_2) x b1_TO2_TO3;
+// b1_TO2 teleported into b1_TO2_TO3
+qubit b2_TO2_epr_2;
+qubit b2_TO2_TO3;
+bit telept_Zcorrect_b2_TO2_2;
+bit telept_Xcorrect_b2_TO2_2;
+reset b2_TO2_epr_2;
+reset b2_TO2_TO3;
+h b2_TO2_epr_2;
+cx b2_TO2_epr_2, b2_TO2_TO3;
+cx b2_TO2, b2_TO2_epr_2;
+h b2_TO2;
+telept_Zcorrect_b2_TO2_2 = measure b2_TO2;
+telept_Xcorrect_b2_TO2_2 = measure b2_TO2_epr_2;
+if(telept_Zcorrect_b2_TO2_2) z b2_TO2_TO3;
+if(telept_Xcorrect_b2_TO2_2) x b2_TO2_TO3;
+// b2_TO2 teleported into b2_TO2_TO3
+qubit b3_TO2_epr_2;
+qubit b3_TO2_TO3;
+bit telept_Zcorrect_b3_TO2_2;
+bit telept_Xcorrect_b3_TO2_2;
+reset b3_TO2_epr_2;
+reset b3_TO2_TO3;
+h b3_TO2_epr_2;
+cx b3_TO2_epr_2, b3_TO2_TO3;
+cx b3_TO2, b3_TO2_epr_2;
+h b3_TO2;
+telept_Zcorrect_b3_TO2_2 = measure b3_TO2;
+telept_Xcorrect_b3_TO2_2 = measure b3_TO2_epr_2;
+if(telept_Zcorrect_b3_TO2_2) z b3_TO2_TO3;
+if(telept_Xcorrect_b3_TO2_2) x b3_TO2_TO3;
+// b3_TO2 teleported into b3_TO2_TO3
+qubit cin0_epr_2;
+qubit cin0_TO3;
+bit telept_Zcorrect_cin0_2;
+bit telept_Xcorrect_cin0_2;
+reset cin0_epr_2;
+reset cin0_TO3;
+h cin0_epr_2;
+cx cin0_epr_2, cin0_TO3;
+cx cin[0], cin0_epr_2;
+h cin[0];
+telept_Zcorrect_cin0_2 = measure cin[0];
+telept_Xcorrect_cin0_2 = measure cin0_epr_2;
+if(telept_Zcorrect_cin0_2) z cin0_TO3;
+if(telept_Xcorrect_cin0_2) x cin0_TO3;
+// cin[0] teleported into cin0_TO3
+qubit cout0_TO2_epr_2;
+qubit cout0_TO2_TO3;
+bit telept_Zcorrect_cout0_TO2_2;
+bit telept_Xcorrect_cout0_TO2_2;
+reset cout0_TO2_epr_2;
+reset cout0_TO2_TO3;
+h cout0_TO2_epr_2;
+cx cout0_TO2_epr_2, cout0_TO2_TO3;
+cx cout0_TO2, cout0_TO2_epr_2;
+h cout0_TO2;
+telept_Zcorrect_cout0_TO2_2 = measure cout0_TO2;
+telept_Xcorrect_cout0_TO2_2 = measure cout0_TO2_epr_2;
+if(telept_Zcorrect_cout0_TO2_2) z cout0_TO2_TO3;
+if(telept_Xcorrect_cout0_TO2_2) x cout0_TO2_TO3;
+// cout0_TO2 teleported into cout0_TO2_TO3
+unmaj cin0_TO3, b0_TO3, a0_TO2_TO3;
+measure b0_TO3 -> ans[0];
+measure b1_TO2_TO3 -> ans[1];
+measure b2_TO2_TO3 -> ans[2];
+measure b3_TO2_TO3 -> ans[3];
+measure cout0_TO2_TO3 -> ans[4];

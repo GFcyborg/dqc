@@ -2480,6 +2480,21 @@ def qasm_token_graph(source: str) -> tuple[nx.DiGraph, nx.Graph, nx.DiGraph]:
     return dag, interaction, chunk_graph
 
 
+def _is_simple_flattenable_if_else(op: Any) -> bool:
+    """True iff `op` is an IfElseOp with exactly one block whose body is a
+    single, unconditioned, no-clbit instruction (the shape produced by rule
+    #11's Z/X teleport corrections and simple `if (bit) gate;` statements)."""
+    from qiskit.circuit.controlflow import IfElseOp
+
+    if not (isinstance(op, IfElseOp) and op.blocks and len(op.blocks) == 1):
+        return False
+    body_instructions = list(op.blocks[0].data)
+    if len(body_instructions) != 1:
+        return False
+    inner = body_instructions[0]
+    return getattr(inner.operation, "condition", None) is None and not inner.clbits
+
+
 def _flatten_simple_if_else_to_legacy_condition(circuit: Any):
     """Work around an Aer 0.17.2 circuit-load crash (`_Map_base::at`), and the
     silent result-corruption it can cause, triggered when a circuit combines a
@@ -2491,26 +2506,35 @@ def _flatten_simple_if_else_to_legacy_condition(circuit: Any):
     unconditioned single-instruction gate into the same instruction applied
     directly with a legacy per-instruction `.condition`, sidestepping Aer's
     modern-control-flow circuit-loading path where the bug lives.
-    See /memories/repo/testing.md for the root-cause writeup.
+
+    Guard: if the circuit contains ANY control-flow op that this pass can't
+    flatten (a WhileLoopOp, ForLoopOp, SwitchCaseOp, or a "complex" IfElseOp),
+    skip flattening entirely and leave the whole circuit as modern control
+    flow. Mixing flattened legacy `.condition` instructions with still-modern
+    control-flow ops in the same circuit (e.g. a while-loop earlier in the
+    program) silently corrupts Aer's simulated measurement outcomes instead of
+    crashing -- confirmed by isolating a while-loop + teleport-correction
+    circuit (mixing-all2.dqc) that gave uniformly random results only when
+    partially flattened, but reproduced the exact deterministic result with
+    flattening skipped entirely. See /memories/repo/testing.md.
     """
-    from qiskit.circuit.controlflow import IfElseOp
+    from qiskit.circuit.controlflow import ControlFlowOp
 
     try:
+        if any(isinstance(instruction.operation, ControlFlowOp) and not _is_simple_flattenable_if_else(instruction.operation) for instruction in circuit.data):
+            return circuit
+
         new_circuit = circuit.copy_empty_like()
         for instruction in circuit.data:
             op = instruction.operation
-            if isinstance(op, IfElseOp) and op.blocks and len(op.blocks) == 1:
+            if _is_simple_flattenable_if_else(op):
                 block = op.blocks[0]
-                body_instructions = list(block.data)
-                if len(body_instructions) == 1:
-                    inner = body_instructions[0]
-                    inner_condition = getattr(inner.operation, "condition", None)
-                    if inner_condition is None and not inner.clbits:
-                        mapped_qubits = [instruction.qubits[block.qubits.index(q)] for q in inner.qubits]
-                        mutable_op = inner.operation.to_mutable() if hasattr(inner.operation, "to_mutable") else inner.operation
-                        mutable_op.condition = op.condition
-                        new_circuit.append(mutable_op, mapped_qubits, [])
-                        continue
+                inner = block.data[0]
+                mapped_qubits = [instruction.qubits[block.qubits.index(q)] for q in inner.qubits]
+                mutable_op = inner.operation.to_mutable() if hasattr(inner.operation, "to_mutable") else inner.operation
+                mutable_op.condition = op.condition
+                new_circuit.append(mutable_op, mapped_qubits, [])
+                continue
             new_circuit.append(instruction)
         return new_circuit
     except Exception:

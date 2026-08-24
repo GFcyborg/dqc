@@ -39,6 +39,49 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             window.close()
             app.processEvents()
 
+    def test_save_flushes_pending_debounced_refresh_before_persisting(self) -> None:
+        # A live edit debounces refresh() by 250ms (_schedule_refresh); saving
+        # split chunks immediately after typing must not persist a stale
+        # .dqc.qasm computed before that edit -- it must flush first.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication([])
+
+        workspace_root = Path(__file__).resolve().parents[1]
+        window = main_window_clean.MainWindow(workspace_root)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                window.split_root = Path(temp_dir)
+                window.current_file = workspace_root / "qasm" / "bell_state.qasm"
+                raw_with_split = "\n".join(
+                    [
+                        "OPENQASM 3.1;",
+                        'include "stdgates.inc";',
+                        "qubit[2] q;",
+                        "h q[0];",
+                        "pragma dqc.v1.split id=1",
+                        "h q[1];",
+                    ]
+                )
+                window.current_source = raw_with_split
+                window.split_points = {5}
+                # Simulate a stale result computed before the latest live edit.
+                window._latest_result = SimpleNamespace(rewritten_source="STALE_PRE_EDIT_RESULT")
+                # setPlainText fires textChanged -> _schedule_refresh(), leaving
+                # a 250ms debounced refresh pending (not yet fired).
+                window.original_editor.setPlainText(raw_with_split)
+                self.assertTrue(window._refresh_timer.isActive())
+
+                saved_dqc = window._persist_split_artifacts()
+
+                self.assertIsNotNone(saved_dqc)
+                self.assertFalse(window._refresh_timer.isActive())
+                self.assertNotEqual(window._latest_result.rewritten_source, "STALE_PRE_EDIT_RESULT")
+                qasm_dump_path = Path(saved_dqc.parent) / f"{window.current_file.stem}.dqc.qasm"
+                self.assertEqual(main_window_clean.read_text(qasm_dump_path), window.rewritten_text())
+        finally:
+            window.close()
+            app.processEvents()
+
     def test_persisted_dqc_qasm_matches_rewritten_view(self) -> None:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         app = QApplication.instance() or QApplication([])
@@ -67,6 +110,7 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
                 )
                 window.current_source = raw_with_split
                 window.original_editor.setPlainText(raw_with_split)
+                window._refresh_timer.stop()  # save() only flushes a *pending* debounced refresh
                 window.split_points = {5}
                 rewritten_with_marker = "\n".join(
                     [
@@ -129,6 +173,7 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
                 )
                 window.current_source = raw_with_split
                 window.original_editor.setPlainText(raw_with_split)
+                window._refresh_timer.stop()  # save() only flushes a *pending* debounced refresh
                 window.split_points = {5}
                 window._latest_result = SimpleNamespace(
                     rewritten_source="\n".join(
@@ -178,6 +223,7 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
                 )
                 window.current_source = raw_with_split
                 window.original_editor.setPlainText(raw_with_split)
+                window._refresh_timer.stop()  # save() only flushes a *pending* debounced refresh
                 window.split_points = {5}
                 window._latest_result = SimpleNamespace(
                     rewritten_source="\n".join(
