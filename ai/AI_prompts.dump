@@ -1403,13 +1403,54 @@ when saving split chunks (to *.dqc), the content of the *.dqc.qasm should match 
 2026.08.24-10.29 (Sorry, no response: try again)
 2026.08.24-10.33
 ---------------------------------------------
+Introduce an easy way (a "Noise" menuitem under Runtime menu) to configure AER noise (initial default is noiseless, as it is now), and briefly document the effects in the noise section at the bottom of the Diagnostics page.
+Move the Smoke test to the top of the Diagnostics page (right under the page title, before all the rest).
+Make sure you are not breaking the current semantics, as the app is almost done (check all unit tests).
+2026.08.25-15.59
+---------------------------------------------
+Last chat task resulted in an infinite loop, with 100% cpu, so I had to force-reboot the computer! Now I just checked manually whether the app works fine, and it seems to be ok, but I want you to check the code more thoroughly, passing all unit tests and doing some test-runs yourself, but always use short timeouts (< 5min) in order to avoid running forever.
+2026.08.25-17.10
+---------------------------------------------
+Investigate and fix the unit-test not passing: why do you "skip" it, as if it's not important?
+What do you mean with: "The one skip is a pre-existing, now well-documented simulation-capacity limitation" ?
+2026.08.25-17.50
+---------------------------------------------
+to the right of each compatibility rule (all of them, from #0 to #99), append a "(Help)" link, where the user can click to open a dialog that explains the need of that specific rule, with a couple of examples showing what may happen without that rule.
+2026.08.25-18.13
+---------------------------------------------
+improve and expand rule #7 (Uint workaround) help: more examples of it, and clearer.
+2026.08.25-18.30
+---------------------------------------------
+The IDE is marking in red this substring "% d" in the string "adds a 1% depolarizing error to supported one" in main_window_clean.py ; Does it need any escaping or is it just a picky IDE?
+2026.08.25-18.43
+---------------------------------------------
+updating "Distrib.QPUs" only requires updating the KaHyPar split-suggestions, not triggering a new run of AER (where it has no effect, right? ).
+Probably this ambiguity was due to the wrong location of the button (in the runtime area): let's completely remove the button (just leave the menuitem).
+2026.08.25-18.58
+---------------------------------------------
+updating "Distrib.QPUs" is somehow affecting the runtime output of last run: the readings disappear when updating Distrib.QPUs (instead the Runtime view should be completely unaffected by that event).
+2026.08.25-19.06
+---------------------------------------------
+using "Run now" (button or menuitem) should clear immediately the runtime output text from last run output, and show the stopwatch (hopefully running). Instead the runtime output is only refreshed at the end of the run, and sometimes the stopwatch is not even shown (probably AER execution takes less than the stopwatch-widget setup).
+2026.08.25-19.16
+---------------------------------------------
+clicking the "Split suggestions: ..." blue text should have the same effect as using "Distrib.QPUs" menuitem.
+2026.08.25-19.36    (post-fixed my typo: "Distrib.QPUs" blue text)
+---------------------------------------------
+
 
 
 ================ TODO:
-This todo has been created by Copilot: to be verified (I didn´t see it happening, actually, but let´s dig it).
+unreachable code?
 
+We are about to finalize the development of this app, which is almost ready: without breaking the semantics, we need to do some general cleanup: fix IDE warnings in pipeline.py (e.g. AerSimulator().available_devices() ), and then streamline the code by simplifying, deduplicating, and making it more readable (e.g. use meaningful var-names, no magic numbers, etc.).
+Add comments where the code is more dense or compact.
+Write comprehensive documentation in the readme page, but don´t make it verbose (show how to do things by showing the commands).
+
+
+This todo has been created by Copilot: to be verified (I didn´t see it happening, actually, but let´s dig it).
 Root-caused and fixed the mixing-all2.dqc fixed-results mismatch: the Aer 0.17.2 crash workaround (`_flatten_simple_if_else_to_legacy_condition`) only flattens rule #11's simple Z/X teleport-correction if-blocks to legacy conditions, leaving everything else as modern control flow; when the circuit ALSO contains a `while` loop, this partial flattening made Aer silently randomize the flattened corrections (confirmed via a minimal hand-written repro isolating adder+teleport code with/without a while loop). Fixed by skipping the flatten pass entirely whenever the circuit contains any control-flow op it can't itself flatten (WhileLoopOp/ForLoopOp/SwitchCaseOp/complex IfElseOp) -- verified this doesn't reintroduce the original crash on splittable.dqc. Added regression test test_mixing_all2_matches_across_rule_11_toggle.
+
 qiskit-example.dqc turned out NOT to reproduce this same corruption right now: its 2nd split point currently injects ZERO teleports at all (dependency analysis reports "no shared qubits", likely because the split pragma lands inside an `if (mid[0]) { reset inner_alias; }` block after rule #10's broadcast-unfold, breaking that chunk's parse and silently falling back). That's a separate, still-open dependency-detection bug -- since nothing gets teleported there, toggling rule #11 currently has no effect on it (trivially "matching"), which isn't the same as it being correctly handled. Left as a follow-up TODO below.
 2026.08.24-(latest)
-
 qiskit-example.dqc's 2nd split point injects no teleports at all (dependency analysis silently falls back to "no shared qubits", likely due to the split pragma landing inside an if-block's broadcast-unfolded body and breaking that chunk's parse) -- investigate and fix so q[0..2] actually gets teleported into chunk 3 as expected.

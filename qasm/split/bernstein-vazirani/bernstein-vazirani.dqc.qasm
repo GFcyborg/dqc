@@ -114,14 +114,112 @@ cx q5_TO2, q3_TO2;
 cx q5_TO2, q4_TO2;
 h q0_TO2;
 h q1_TO2;
+/* Teleporting qubits into chunk 3:
+ * q0_TO2 from chunk 2
+ * q1_TO2 from chunk 2
+ * q2_TO2 from chunk 2
+ * q3_TO2 from chunk 2
+ * q4_TO2 from chunk 2
+ * q5_TO2 from chunk 2
+ */
+qubit q0_TO2_epr_2;
+qubit q0_TO2_TO3;
+bit telept_Zcorrect_q0_TO2_2;
+bit telept_Xcorrect_q0_TO2_2;
+reset q0_TO2_epr_2;
+reset q0_TO2_TO3;
+h q0_TO2_epr_2;
+cx q0_TO2_epr_2, q0_TO2_TO3;
+cx q0_TO2, q0_TO2_epr_2;
+h q0_TO2;
+telept_Zcorrect_q0_TO2_2 = measure q0_TO2;
+telept_Xcorrect_q0_TO2_2 = measure q0_TO2_epr_2;
+if(telept_Zcorrect_q0_TO2_2) z q0_TO2_TO3;
+if(telept_Xcorrect_q0_TO2_2) x q0_TO2_TO3;
+// q0_TO2 teleported into q0_TO2_TO3
+qubit q1_TO2_epr_2;
+qubit q1_TO2_TO3;
+bit telept_Zcorrect_q1_TO2_2;
+bit telept_Xcorrect_q1_TO2_2;
+reset q1_TO2_epr_2;
+reset q1_TO2_TO3;
+h q1_TO2_epr_2;
+cx q1_TO2_epr_2, q1_TO2_TO3;
+cx q1_TO2, q1_TO2_epr_2;
+h q1_TO2;
+telept_Zcorrect_q1_TO2_2 = measure q1_TO2;
+telept_Xcorrect_q1_TO2_2 = measure q1_TO2_epr_2;
+if(telept_Zcorrect_q1_TO2_2) z q1_TO2_TO3;
+if(telept_Xcorrect_q1_TO2_2) x q1_TO2_TO3;
+// q1_TO2 teleported into q1_TO2_TO3
+qubit q2_TO2_epr_2;
+qubit q2_TO2_TO3;
+bit telept_Zcorrect_q2_TO2_2;
+bit telept_Xcorrect_q2_TO2_2;
+reset q2_TO2_epr_2;
+reset q2_TO2_TO3;
+h q2_TO2_epr_2;
+cx q2_TO2_epr_2, q2_TO2_TO3;
+cx q2_TO2, q2_TO2_epr_2;
 h q2_TO2;
+telept_Zcorrect_q2_TO2_2 = measure q2_TO2;
+telept_Xcorrect_q2_TO2_2 = measure q2_TO2_epr_2;
+if(telept_Zcorrect_q2_TO2_2) z q2_TO2_TO3;
+if(telept_Xcorrect_q2_TO2_2) x q2_TO2_TO3;
+// q2_TO2 teleported into q2_TO2_TO3
+qubit q3_TO2_epr_2;
+qubit q3_TO2_TO3;
+bit telept_Zcorrect_q3_TO2_2;
+bit telept_Xcorrect_q3_TO2_2;
+reset q3_TO2_epr_2;
+reset q3_TO2_TO3;
+h q3_TO2_epr_2;
+cx q3_TO2_epr_2, q3_TO2_TO3;
+cx q3_TO2, q3_TO2_epr_2;
 h q3_TO2;
+telept_Zcorrect_q3_TO2_2 = measure q3_TO2;
+telept_Xcorrect_q3_TO2_2 = measure q3_TO2_epr_2;
+if(telept_Zcorrect_q3_TO2_2) z q3_TO2_TO3;
+if(telept_Xcorrect_q3_TO2_2) x q3_TO2_TO3;
+// q3_TO2 teleported into q3_TO2_TO3
+qubit q4_TO2_epr_2;
+qubit q4_TO2_TO3;
+bit telept_Zcorrect_q4_TO2_2;
+bit telept_Xcorrect_q4_TO2_2;
+reset q4_TO2_epr_2;
+reset q4_TO2_TO3;
+h q4_TO2_epr_2;
+cx q4_TO2_epr_2, q4_TO2_TO3;
+cx q4_TO2, q4_TO2_epr_2;
 h q4_TO2;
+telept_Zcorrect_q4_TO2_2 = measure q4_TO2;
+telept_Xcorrect_q4_TO2_2 = measure q4_TO2_epr_2;
+if(telept_Zcorrect_q4_TO2_2) z q4_TO2_TO3;
+if(telept_Xcorrect_q4_TO2_2) x q4_TO2_TO3;
+// q4_TO2 teleported into q4_TO2_TO3
+qubit q5_TO2_epr_2;
+qubit q5_TO2_TO3;
+bit telept_Zcorrect_q5_TO2_2;
+bit telept_Xcorrect_q5_TO2_2;
+reset q5_TO2_epr_2;
+reset q5_TO2_TO3;
+h q5_TO2_epr_2;
+cx q5_TO2_epr_2, q5_TO2_TO3;
+cx q5_TO2, q5_TO2_epr_2;
 h q5_TO2;
-barrier q0_TO2, q1_TO2, q2_TO2, q3_TO2, q4_TO2, q5_TO2;
-c[0] = measure q0_TO2;
-c[1] = measure q1_TO2;
-c[2] = measure q2_TO2;
-c[3] = measure q3_TO2;
-c[4] = measure q4_TO2;
-c[5] = measure q5_TO2;
+telept_Zcorrect_q5_TO2_2 = measure q5_TO2;
+telept_Xcorrect_q5_TO2_2 = measure q5_TO2_epr_2;
+if(telept_Zcorrect_q5_TO2_2) z q5_TO2_TO3;
+if(telept_Xcorrect_q5_TO2_2) x q5_TO2_TO3;
+// q5_TO2 teleported into q5_TO2_TO3
+h q2_TO2_TO3;
+h q3_TO2_TO3;
+h q4_TO2_TO3;
+h q5_TO2_TO3;
+barrier q0_TO2_TO3, q1_TO2_TO3, q2_TO2_TO3, q3_TO2_TO3, q4_TO2_TO3, q5_TO2_TO3;
+c[0] = measure q0_TO2_TO3;
+c[1] = measure q1_TO2_TO3;
+c[2] = measure q2_TO2_TO3;
+c[3] = measure q3_TO2_TO3;
+c[4] = measure q4_TO2_TO3;
+c[5] = measure q5_TO2_TO3;

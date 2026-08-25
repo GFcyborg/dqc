@@ -12,6 +12,8 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Si
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat, QTextCursor, QTextFormat, QBrush, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGraphicsItem,
     QGraphicsEllipseItem,
@@ -36,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL, RULE_ID_BYPASS_ALL, RULE_ID_RESTORE_CONCAT, RULE_ID_SPLIT_GEN_TELEPORTS, summary_text, teleport_correction_clbit_indices
+from .pipeline import DQC_TELEPORT_BLOCK_END_SENTINEL, RULE_ID_BYPASS_ALL, RULE_ID_NO_PRAGMAS, RULE_ID_RESTORE_CONCAT, RULE_ID_SPLIT_GEN_TELEPORTS, summary_text, teleport_correction_clbit_indices
 
 # Semantic colors shared across the rewritten-code view, teleport/split
 # highlighting, and circuit label styling; kept in one place so all
@@ -1134,6 +1136,221 @@ class HtmlCodeView(QTextBrowser):
             self.zoomOut(abs(delta))
 
 
+RULE_HELP_HTML: dict[int, str] = {
+    0: (
+        "<p>Master bypass switch: when checked, none of the conditional rules "
+        "(#1-#11) are applied, but their individual checkbox states are kept "
+        "unchanged (only visually grayed out) so you don't lose your custom "
+        "selection while comparing \"with rules\" vs. \"raw\" output.</p>"
+        "<p><b>Example:</b> with rule #6 checked and rule #0 also checked, "
+        "<code>if(c==1)</code> is left exactly as written in the Rewritten "
+        "view; unchecking rule #0 immediately re-applies rule #6, turning it "
+        "into <code>if(c)</code>, without you having to re-tick anything.</p>"
+    ),
+    1: (
+        "<p>Removes comments from the <i>original</i> source before it reaches "
+        "qiskit-qasm3-import. This keeps the Rewritten view uncluttered and "
+        "prevents other line-based rewriting rules from ever having to reason "
+        "about text that is only a comment.</p>"
+        "<p><b>Example:</b> <code>// a = 0001</code> in adder.qasm disappears "
+        "from the Rewritten view when this rule is active; with it off, the "
+        "comment text remains visible (and would otherwise risk being scanned "
+        "by unrelated rules, e.g. one mentioning \"uint\" inside a comment).</p>"
+    ),
+    2: (
+        "<p>Removes blank lines from the transpiled output. Purely cosmetic: "
+        "qiskit-qasm3-import tolerates blank lines fine, but leaving them in "
+        "makes the Rewritten view (and any *.dqc.qasm dump) needlessly long, "
+        "especially once rule #1 has already emptied out comment lines.</p>"
+        "<p><b>Example:</b> a file with several blank separator lines between "
+        "sections collapses to a compact block when this rule is on.</p>"
+    ),
+    3: (
+        "<p>Injects a mandatory <code>OPENQASM 3.1;</code> version header as "
+        "the first line, if the source is missing one.</p>"
+        "<p><b>Example:</b> a bare snippet like <code>qubit[1] q; h q;</code> "
+        "with no header fails to parse in qiskit-qasm3-import (it requires an "
+        "explicit version declaration); with this rule active, the header is "
+        "auto-inserted and the same snippet parses and runs normally.</p>"
+    ),
+    4: (
+        "<p>Injects <code>include \"stdgates.inc\";</code> as the second line "
+        "if it is missing. Standard gates like <code>h</code>, <code>x</code> "
+        "and <code>cx</code> are defined in that include file, not built in.</p>"
+        "<p><b>Example:</b> without the include, using <code>h q[0];</code> "
+        "fails with an \"unknown gate h\" style error; with this rule active, "
+        "the include is added automatically so the gate resolves.</p>"
+    ),
+    5: (
+        "<p>Prefixes a custom gate definition (and all its call sites) with "
+        "<code>my_</code> when its name collides with a gate already defined "
+        "in stdgates.inc, avoiding a duplicate-definition error.</p>"
+        "<p><b>Example:</b> cphase+.qasm defines its own <code>gate cphase(...)"
+        "</code>, which collides with the standard <code>cphase</code> gate; "
+        "without this rule, import fails; with it, the definition and every "
+        "usage are renamed to <code>my_cphase</code>.</p>"
+    ),
+    6: (
+        "<p>Rewrites <code>if(bit == 1)</code> to <code>if(bit)</code> and "
+        "<code>if(bit == 0)</code> to <code>if(!bit)</code>. qiskit-qasm3-"
+        "import's classical control-flow support is more reliable with a "
+        "plain boolean condition than with an explicit equality comparison.</p>"
+        "<p><b>Example:</b> <code>if(c==1) x q[0];</code> can fail to import "
+        "or execute correctly as written; rewritten as <code>if(c) x q[0];</code> "
+        "it is accepted and behaves as expected (also works for array elements "
+        "like <code>mid[0]==1</code>).</p>"
+    ),
+    7: (
+        "<p>The <code>uint</code> type is valid OpenQASM3, but qiskit-qasm3-"
+        "import rejects it outright &mdash; any <code>uint[n]</code> "
+        "declaration, or any expression that reads/indexes one, fails to "
+        "import. This rule removes every trace of <code>uint</code> from the "
+        "code that reaches the importer, using four different tactics "
+        "depending on how the value is used:</p>"
+        "<ol style='margin-top:2px;'>"
+        "<li><b>Constant folding</b> &mdash; when a <code>uint</code> is "
+        "assigned a literal number, the declaration is dropped entirely and "
+        "every later read of it is replaced by the actual bit value.</li>"
+        "<li><b>Loop unrolling</b> &mdash; a <code>for uint i in [...] {...}"
+        "</code> loop is not a supported control-flow form either, so its "
+        "body is duplicated once per iteration, with the loop variable "
+        "substituted by its literal value each time.</li>"
+        "<li><b>Guard simplification</b> &mdash; once a bit value is known "
+        "at rewrite time, <code>bool(1)</code>/<code>bool(0)</code> become "
+        "<code>true</code>/<code>false</code>, and an <code>if(true){...}"
+        "</code>/<code>if(false){...}</code> left over from that is folded "
+        "down to just its body (or dropped entirely).</li>"
+        "<li><b>Type fallback</b> &mdash; if a <code>uint</code> is declared "
+        "without a literal value (e.g. computed from another variable), the "
+        "value can't be folded at rewrite time, so the declaration is instead "
+        "lowered to a same-width <code>bit[n]</code>.</li>"
+        "</ol>"
+        "<p><b>Example 1 &mdash; constant folding + bit access</b> "
+        "(adder.qasm):</p>"
+        "<pre>uint[4] a_in = 1;  // a = 0001\n"
+        "...\n"
+        "if(bool(a_in[0])) x a[0];\n"
+        "if(bool(a_in[1])) x a[1];</pre>"
+        "<p>becomes (the declaration disappears; each <code>a_in[i]</code> is "
+        "replaced by its actual bit of the value 1, i.e. <code>0b0001</code>):"
+        "</p>"
+        "<pre>x a[0];\n"
+        "               <i>(line dropped: bit 1 of a_in is 0, so bool(0) -&gt; false)</i></pre>"
+        "<p><b>Example 2 &mdash; loop unrolling over a constant range</b> "
+        "(adder.qasm, combined with example 1's folding inside the same "
+        "loop body):</p>"
+        "<pre>for uint i in [0: 3] {\n"
+        "  if(bool(a_in[i])) x a[i];\n"
+        "  if(bool(b_in[i])) x b[i];\n"
+        "}</pre>"
+        "<p>becomes 4 unrolled copies of the body (i = 0, 1, 2, 3), each with "
+        "<code>i</code> replaced by its literal value and then folded per "
+        "example 1; for <code>a_in=1</code>, <code>b_in=15</code> this yields:"
+        "</p>"
+        "<pre>x a[0];\n"
+        "x b[0];\n"
+        "x b[1];\n"
+        "x b[2];\n"
+        "x b[3];</pre>"
+        "<p><b>Example 3 &mdash; loop unrolling with index arithmetic</b> "
+        "(adder.qasm's ripple-carry chain, also needs rule #7's index-"
+        "arithmetic folding so later rules can match the resulting literal "
+        "index, e.g. for teleportation renaming):</p>"
+        "<pre>for uint i in [0: 2] { majority a[i], b[i + 1], a[i + 1]; }</pre>"
+        "<p>becomes (i = 0, 1, 2; note <code>b[i + 1]</code> is folded all "
+        "the way down to a plain literal index, not left as <code>b[0 + 1]"
+        "</code>):</p>"
+        "<pre>majority a[0], b[1], a[1];\n"
+        "majority a[1], b[2], a[2];\n"
+        "majority a[2], b[3], a[3];</pre>"
+        "<p><b>Example 4 &mdash; descending range, and a non-constant "
+        "declaration falling back to <code>bit[n]</code></b>:</p>"
+        "<pre>for uint i in [2: -1: 0] { unmaj a[i], b[i+1], a[i+1]; }</pre>"
+        "<p>unrolls in descending order (i = 2, 1, 0). Separately, a "
+        "declaration whose value isn't a plain literal, e.g.:</p>"
+        "<pre>uint[4] sum = a_in + b_in;</pre>"
+        "<p>cannot be folded at rewrite time (the exact value depends on "
+        "other computed values), so this rule falls back to a same-width "
+        "<code>bit[4] sum;</code> declaration instead &mdash; still not a "
+        "true unsigned-integer type, but at least one that qiskit-qasm3-"
+        "import accepts.</p>"
+    ),
+    8: (
+        "<p>Drops <code>let</code> alias declarations and inlines every "
+        "following reference back to the aliased expression, since qiskit-"
+        "qasm3-import does not accept an alias identifier as a gate operand "
+        "the way the app's own downstream analysis needs it.</p>"
+        "<p><b>Example:</b> <code>let aliased = q[2:5]; h aliased[0];</code> "
+        "becomes <code>h q[2:5][0];</code>, with no <code>let</code> left.</p>"
+    ),
+    9: (
+        "<p>Resolves chained indexing left over after rule #8 (e.g. a slice or "
+        "index-set immediately re-indexed) down to the single concrete element "
+        "it refers to. The OpenQASM3 <code>gateOperand</code> grammar only "
+        "allows a plain identifier plus index operators, not a nested slice.</p>"
+        "<p><b>Example:</b> <code>q[2:5][1]</code> fails to import as a gate "
+        "operand; this rule resolves it directly to <code>q[3]</code>. The "
+        "same applies to index-sets, e.g. <code>q[{1, 2}][0]</code> -&gt; "
+        "<code>q[1]</code>.</p>"
+    ),
+    10: (
+        "<p>Unfolds broadcast-style statements (<code>reset</code>, "
+        "<code>barrier</code>, <code>measure</code>) acting on a whole "
+        "register into one explicit statement per qubit, so that later "
+        "per-qubit chunk-dependency analysis and teleportation (rule #11) "
+        "can reason about individual qubits unambiguously.</p>"
+        "<p><b>Example:</b> <code>reset q;</code> over a 2-qubit register "
+        "becomes <code>reset q[0]; reset q[1];</code>, so a split point that "
+        "only needs <code>q[1]</code> downstream doesn't have to (and won't) "
+        "also drag in <code>q[0]</code>.</p>"
+    ),
+    RULE_ID_SPLIT_GEN_TELEPORTS: (
+        "<p>Replaces each <code>pragma dqc.v1.split id=N;</code> line (a dqc-"
+        "specific grammar extension, not standard OpenQASM3) with a folded "
+        "teleportation comment block plus the actual Bell-pair/measurement/"
+        "correction code needed to physically move the dependent qubits into "
+        "the next chunk, so the whole multi-chunk program can still run as "
+        "one combined circuit on a single Aer backend.</p>"
+        "<p><b>Example:</b> a <code>.dqc</code> file's split pragma, left "
+        "unexpanded, is not valid OpenQASM3 and cannot run at all; with this "
+        "rule active it becomes a real teleportation of the crossing qubits "
+        "(e.g. <code>q[0]</code> teleported into <code>q0_TO2</code>).</p>"
+    ),
+    RULE_ID_RESTORE_CONCAT: (
+        "<p>Unconditional normalization: qiskit-qasm3-import rejects the "
+        "<code>++</code> register-concatenation syntax in <code>let</code>/"
+        "<code>const</code> declarations, even though it is valid OpenQASM3 "
+        "grammar (openqasm3's own parser accepts it fine). This rule silently "
+        "restores the equivalent index-set form right before parsing.</p>"
+        "<p><b>Example:</b> <code>let w = q[1] ++ q[2];</code> fails to import "
+        "as written; normalized to <code>let w = q[{1, 2}];</code> it imports "
+        "correctly, with no visible change anywhere else.</p>"
+    ),
+    RULE_ID_NO_PRAGMAS: (
+        "<p>Final, unconditional safety net: comments out every pragma line "
+        "still present just before the code reaches qiskit-qasm3-import. Any "
+        "leftover pragma (a disabled rule #11's un-expanded split pragma, or "
+        "any other <code>pragma ...;</code>) otherwise crashes the Runtime, "
+        "even though standard OpenQASM3 says pragmas must be ignorable.</p>"
+        "<p><b>Example:</b> a stray <code>pragma foo bar;</code> anywhere in "
+        "the source would fail with \"node of type Pragma is not supported\"; "
+        "this rule turns it into <code>// pragma foo bar;</code> so nothing "
+        "ever reaches qiskit unguarded.</p>"
+    ),
+}
+
+
+def _make_rule_help_link(rule_id: int, rule_name: str, opener: Callable[[int, str], None]) -> QLabel:
+    link = QLabel("<a href='#'>(Help)</a>")
+    link.setTextFormat(Qt.TextFormat.RichText)
+    link.setOpenExternalLinks(False)
+    link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+    link.setCursor(Qt.CursorShape.PointingHandCursor)
+    link.setStyleSheet("QLabel { color: #2563eb; font-size: 11px; }")
+    link.linkActivated.connect(lambda _url, rid=rule_id, name=rule_name: opener(rid, name))
+    return link
+
+
 class RulePanel(QFrame):
     ruleToggled = Signal(int, bool)
 
@@ -1166,6 +1383,8 @@ class RulePanel(QFrame):
                 check.setStyleSheet("color: #0f172a;")
             check.toggled.connect(lambda checked, rule_id=rule.rule_id: self.ruleToggled.emit(rule_id, checked))
             row_layout.addWidget(check)
+            row_layout.addWidget(_make_rule_help_link(rule.rule_id, rule.name, self._show_rule_help))
+            row_layout.addStretch(1)
             layout.addWidget(row)
             desc = QLabel(rule.description)
             desc.setWordWrap(True)
@@ -1195,6 +1414,8 @@ class RulePanel(QFrame):
                 check.setEnabled(False)  # Always disabled
                 check.setStyleSheet("color: #94a3b8;")
                 row_layout.addWidget(check)
+                row_layout.addWidget(_make_rule_help_link(rule.rule_id, rule.name, self._show_rule_help))
+                row_layout.addStretch(1)
                 layout.addWidget(row)
                 desc = QLabel(rule.description)
                 desc.setWordWrap(True)
@@ -1203,6 +1424,22 @@ class RulePanel(QFrame):
                 self._rows[rule.rule_id] = check
         
         layout.addStretch(1)
+
+    def _show_rule_help(self, rule_id: int, rule_name: str) -> None:
+        body = RULE_HELP_HTML.get(rule_id, "<p>No additional details are available for this rule.</p>")
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Rule #{rule_id}: {rule_name} \u2014 Help")
+        dialog.setMinimumSize(560, 380)
+        dialog_layout = QVBoxLayout(dialog)
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(body)
+        dialog_layout.addWidget(browser)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        dialog_layout.addWidget(buttons)
+        dialog.exec()
 
     def set_states(self, enabled_rules: set[int], bypass: bool) -> None:
         for rule_id, check in self._rows.items():

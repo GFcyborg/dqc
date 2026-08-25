@@ -2589,11 +2589,13 @@ def aer_hardware_info() -> dict[str, Any]:
         usable_logical_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         usable_logical_cpus = os.cpu_count() or 1
-    devices = tuple(str(device).upper() for device in AerSimulator().available_devices())
+    available_devices = AerSimulator().available_devices() or ()
+    devices = tuple(str(device).upper() for device in available_devices)
+    available_mb = int(memory.available / BYTES_PER_MEBIBYTE)
     return {
         "memory_total_mb": int(memory.total / BYTES_PER_MEBIBYTE),
-        "memory_available_mb": int(memory.available / BYTES_PER_MEBIBYTE),
-        "aer_memory_budget_mb": aer_memory_budget_mb(memory.available),
+        "memory_available_mb": available_mb,
+        "aer_memory_budget_mb": aer_memory_budget_mb(available_mb * BYTES_PER_MEBIBYTE),
         "physical_cpus": psutil.cpu_count(logical=False) or 0,
         "usable_logical_cpus": usable_logical_cpus,
         "aer_devices": devices,
@@ -2601,7 +2603,22 @@ def aer_hardware_info() -> dict[str, Any]:
     }
 
 
-def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int], str, str]:
+def _aer_noise_model(noise_mode: str):
+    """Build the selected optional noise model; the default remains noiseless."""
+    mode = (noise_mode or "noiseless").strip().lower()
+    if mode in {"", "off", "none", "noiseless"}:
+        return None
+    if mode == "depolarizing-1%":
+        from qiskit_aer.noise import NoiseModel, depolarizing_error
+
+        model = NoiseModel()
+        model.add_all_qubit_quantum_error(depolarizing_error(0.01, 1), ["u", "u1", "u2", "u3", "h", "x", "y", "z"])
+        model.add_all_qubit_quantum_error(depolarizing_error(0.01, 2), ["cx", "cz", "swap"])
+        return model
+    raise ValueError(f"Unknown AER noise mode: {noise_mode}")
+
+
+def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: str = "auto", noise_mode: str = "noiseless") -> tuple[dict[str, int], str, str]:
     from qiskit_aer import AerSimulator
 
     # Prefer MPS first, then fall back to the default simulator if needed.
@@ -2621,6 +2638,7 @@ def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: 
         ("MPS", AerSimulator(method="matrix_product_state", **backend_options)),
         ("monolithic", AerSimulator(**backend_options)),
     ]
+    noise_model = _aer_noise_model(noise_mode)
     preferred = (preferred_backend or "auto").strip().lower()
     if preferred in {"mps", "monolithic"}:
         preferred_name = "MPS" if preferred == "mps" else "monolithic"
@@ -2628,7 +2646,10 @@ def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: 
     last_exc: Exception | None = None
     for backend_name, backend in backends:
         try:
-            result = backend.run(compiled, shots=shots).result()
+            run_options: dict[str, Any] = {"shots": shots}
+            if noise_model is not None:
+                run_options["noise_model"] = noise_model
+            result = backend.run(compiled, **run_options).result()
             counts = dict(result.get_counts())
             # Keep this note explicit and human-readable in Runtime output.
             runtime_note = ""
@@ -2648,19 +2669,19 @@ def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: 
     raise RuntimeError("Aer execution failed without a reported exception")
 
 
-def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | None = None) -> RewriteResult:
+def run_on_aer(source: str, shots: int, parameter_bindings: dict[str, str] | None = None, noise_mode: str = "noiseless") -> RewriteResult:
     from qiskit_qasm3_import import parse as qiskit_parse
 
     start = time.perf_counter()
     circuit, _, fallback_events = parse_qiskit_with_pragma_resilience(qiskit_parse, source)
     circuit = _bind_circuit_parameters(circuit, parameter_bindings)
     compiled = _compile_for_aer_runtime(circuit)
-    counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots)
+    counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots, noise_mode=noise_mode)
     duration_s = time.perf_counter() - start
     return RewriteResult(source=source, rewritten_source=source, circuit=circuit, counts=counts, duration_s=duration_s, fallback_events=fallback_events, runtime_backend=runtime_backend, runtime_note=runtime_note)
 
 
-def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] | None, shots: int, preferred_backend: str = "auto") -> tuple[dict[str, int] | None, str | None, datetime, str, str]:
+def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] | None, shots: int, preferred_backend: str = "auto", noise_mode: str = "noiseless") -> tuple[dict[str, int] | None, str | None, datetime, str, str]:
     run_timestamp = datetime.now(timezone.utc)
     try:
         from qiskit_qasm3_import import parse as qiskit_parse
@@ -2668,7 +2689,7 @@ def run_runtime_counts(runtime_source: str, parameter_bindings: dict[str, str] |
         circuit, _, _ = parse_qiskit_with_pragma_resilience(qiskit_parse, runtime_source)
         circuit = _bind_circuit_parameters(circuit, parameter_bindings)
         compiled = _compile_for_aer_runtime(circuit)
-        counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots, preferred_backend=preferred_backend)
+        counts, runtime_backend, runtime_note = _run_aer_counts_with_fallback(compiled, shots, preferred_backend=preferred_backend, noise_mode=noise_mode)
         return counts, None, run_timestamp, runtime_backend, runtime_note
     except Exception as exc:
         return None, str(exc), run_timestamp, "", ""
@@ -2904,14 +2925,18 @@ def latest_versions_from_pypi(packages: Iterable[str]) -> dict[str, str]:
     return updates
 
 
-def smoke_test_hadamard(shots: int = 256) -> dict[str, Any]:
+def smoke_test_hadamard(shots: int = 256, noise_mode: str = "noiseless") -> dict[str, Any]:
     from qiskit import QuantumCircuit
     from qiskit_aer import AerSimulator
 
     circuit = QuantumCircuit(1, 1)
     circuit.h(0)
     circuit.measure(0, 0)
-    backend = AerSimulator()
+    backend_options = {}
+    noise_model = _aer_noise_model(noise_mode)
+    if noise_model is not None:
+        backend_options["noise_model"] = noise_model
+    backend = AerSimulator(**backend_options)
     started = time.perf_counter()
     result = backend.run(circuit, shots=shots).result()
     duration_s = time.perf_counter() - started

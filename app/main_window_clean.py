@@ -74,6 +74,15 @@ from .pipeline import (
 from .widgets import CircuitView, CodeEditor, DiagnosticsView, GraphTab, HtmlCodeView, ParseTreeView, RulePanel, QiskitDagTab, ChunkDagTab, QubitInteractionTab, runtime_measurement_html
 
 
+class ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class ParameterDialog(QDialog):
     def __init__(self, parameters: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -196,6 +205,7 @@ class MainWindow(QMainWindow):
         self.shots = 1024
         self.timeout_s = 20
         self.distributed_nodes = 3
+        self.noise_mode = "noiseless"
         self._find_query = ""
         self._find_case_insensitive = True
         self._find_matches: list[tuple[int, Any, QTextCursor]] = []
@@ -383,8 +393,11 @@ class MainWindow(QMainWindow):
         code_shell = QWidget()
         code_layout = QVBoxLayout(code_shell)
         code_layout.setContentsMargins(0, 0, 0, 0)
-        self.suggestion_label = QLabel("Split suggestions: none yet")
+        self.suggestion_label = ClickableLabel("Split suggestions: none yet")
         self.suggestion_label.setStyleSheet("color: #1d4ed8; font-weight: 700; text-decoration: underline;")
+        self.suggestion_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.suggestion_label.setToolTip("Click to change the number of distributed QPUs")
+        self.suggestion_label.clicked.connect(self.change_distributed_nodes)
         code_layout.addWidget(self._make_header("Code", [("Find", self.show_find_dialog), ("Zoom +", lambda: self.zoom_active(1)), ("Zoom -", lambda: self.zoom_active(-1)), ("Reset", self.zoom_reset)], [self.suggestion_label], accent="#3b82f6", area_name="Code"))
         code_layout.addWidget(self.code_tabs)
         self.code_tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -403,7 +416,6 @@ class MainWindow(QMainWindow):
                 ("Run now", self.run_manual),
                 (self._runtime_shots_label(), self.change_shots),
                 (self._runtime_timeout_label(), self.change_timeout),
-                (self._runtime_nodes_label(), self.change_distributed_nodes),
             ],
             [self._circuit_loading_indicator],
             accent="#10b981",
@@ -412,16 +424,13 @@ class MainWindow(QMainWindow):
         runtime_layout.addWidget(runtime_header)
         shots_btn: QPushButton | None = None
         timeout_btn: QPushButton | None = None
-        nodes_btn: QPushButton | None = None
         for btn in runtime_header.findChildren(QPushButton):
             text = btn.text().strip()
             if text.startswith("Qiskit shots"):
                 shots_btn = btn
             elif text.startswith("Timeout"):
                 timeout_btn = btn
-            elif text.startswith("Distrib.QPUs"):
-                nodes_btn = btn
-        self._runtime_buttons = (shots_btn, timeout_btn, nodes_btn)
+        self._runtime_buttons = (shots_btn, timeout_btn)
         self.circuit_view = CircuitView()
         self.runtime_output = QTextBrowser()
         self.runtime_output.setOpenExternalLinks(False)
@@ -709,7 +718,9 @@ class MainWindow(QMainWindow):
 
     def _diagnostics_html(self, versions: dict[str, str], updates: dict[str, str], smoke: dict, hardware: dict) -> str:
         packages = self._all_bom_packages()
-        lines = ["<h2 style='margin-top:0'>Diagnostics</h2>", "<p>Installed packages and update status:</p>", "<ul>"]
+        lines = ["<h2 style='margin-top:0'>Diagnostics</h2>"]
+        lines.append(f"<p><b>Smoke test (Hadamard gate, shots={smoke['shots']}):</b> duration {smoke['duration_s']:.3f}s, counts {smoke['counts']}</p>")
+        lines.extend(["<p>Installed packages and update status:</p>", "<ul>"])
         for package in packages:
             lines.append(f"<li>{self._package_status_text(package, versions, updates)}</li>")
         lines.append("</ul>")
@@ -724,15 +735,12 @@ class MainWindow(QMainWindow):
         lines.append(f"<li>Aer devices: {devices}. GPU offload: {gpu_status}.</li>")
         lines.append("</ul>")
         lines.append(
-            "<p><b>Simulation noise:</b> runs use Aer's default noiseless simulators "
-            "(no gate-error/decoherence NoiseModel is configured), so the only source "
-            "of run-to-run variation in measurement counts is statistical shot-sampling "
-            "noise inherent to quantum measurement -- repeated runs of the same circuit "
-            "at the same shot count will show small fluctuations in each outcome's share "
-            "of shots, shrinking as shots increases (fluctuations scale roughly with "
-            "1/&radic;shots). This is expected and is not evidence of a bug.</p>"
+            f"<p><b>Simulation noise:</b> the configured mode is <b>{html.escape(self.noise_mode)}</b>. "
+            "Noiseless mode adds no modeled gate errors or decoherence; depolarizing-1% "
+            "adds a 1-percent depolarizing error to supported one- and two-qubit gates. In both "
+            "modes, measurement counts also vary statistically between runs, with typical "
+            "fluctuations shrinking as shots increase (roughly with 1/&radic;shots).</p>"
         )
-        lines.append(f"<p>Smoke test (Hadamard gate, shots={self.shots}): duration {smoke['duration_s']:.3f}s, counts {smoke['counts']}</p>")
         return "".join(lines)
 
     def _on_area_header_context_menu(self, _pos) -> None:
@@ -814,6 +822,9 @@ class MainWindow(QMainWindow):
         nodes_action = QAction(self._runtime_nodes_label(), self)
         nodes_action.triggered.connect(self.change_distributed_nodes)
         runtime_menu.addAction(nodes_action)
+        self._noise_action = QAction(self._noise_label(), self)
+        self._noise_action.triggered.connect(self.change_noise)
+        runtime_menu.addAction(self._noise_action)
         diagnostics_action = QAction("Diagnostics", self)
         diagnostics_action.triggered.connect(self.show_diagnostics)
         runtime_menu.addAction(diagnostics_action)
@@ -1423,7 +1434,7 @@ already declared in the surrounding chunk code.</p>
         suggestion_text = ", ".join(str(line) for line in sorted_suggestions) if sorted_suggestions else "none yet"
         self.suggestion_label.setText(f"Split suggestions: {suggestion_text}")
 
-    def refresh(self, *, start_runtime: bool = True) -> None:
+    def refresh(self, *, start_runtime: bool = True, preserve_runtime_output: bool = False) -> None:
         self._runtime_refresh_requested = False
         early_stopwatch = bool(start_runtime)
         if early_stopwatch:
@@ -1431,6 +1442,11 @@ already declared in the surrounding chunk code.</p>
             # even while rewrite/analysis is still preparing runtime input.
             self._runtime_stopwatch_label.setVisible(True)
             self._runtime_stopwatch_label.setText("Running simulation... 00:00:00.000")
+            # Clear last run's output right away and force a repaint now: the
+            # rewrite/analysis below runs synchronously and can take a moment,
+            # during which Qt would otherwise leave the old readings on screen.
+            self.runtime_output.setPlainText("Preparing to run...\nAnalyzing code and building the circuit...")
+            QApplication.processEvents()
         self._visual_refresh_token += 1
         visual_token = self._visual_refresh_token
         runtime_started = False
@@ -1458,7 +1474,9 @@ already declared in the surrounding chunk code.</p>
             self.original_editor.setPragmaLines(pragma_lines)
             self.original_editor.setSplitSuggestions(set(result.suggested_split_points))
             self.original_editor.line_number_area.update()
-            if bool(scan_inputs(analysis_source)) and not self.parameter_bindings and getattr(self, "_suppress_parameter_prompt", False):
+            if preserve_runtime_output:
+                pass
+            elif bool(scan_inputs(analysis_source)) and not self.parameter_bindings and getattr(self, "_suppress_parameter_prompt", False):
                 self._shutdown_runtime_executor()
                 self.runtime_output.setPlainText("Saved split chunks. Parameter input is preserved for this session.")
             elif needs_parameters:
@@ -1609,13 +1627,11 @@ already declared in the surrounding chunk code.</p>
             nodes_action.setText(nodes_label)
 
         if self._runtime_buttons is not None:
-            shots_btn, timeout_btn, nodes_btn = self._runtime_buttons
+            shots_btn, timeout_btn = self._runtime_buttons
             if shots_btn is not None:
                 shots_btn.setText(shots_label)
             if timeout_btn is not None:
                 timeout_btn.setText(timeout_label)
-            if nodes_btn is not None:
-                nodes_btn.setText(nodes_label)
 
     def _runtime_shots_label(self) -> str:
         return f"Qiskit shots ({self.shots})"
@@ -1627,6 +1643,9 @@ already declared in the surrounding chunk code.</p>
 
     def _runtime_nodes_label(self) -> str:
         return f"Distrib.QPUs ({self.distributed_nodes})"
+
+    def _noise_label(self) -> str:
+        return f"Noise ({self.noise_mode})"
 
     def zoom_active(self, delta: int) -> None:
         widget: Any = self.focusWidget()
@@ -1760,7 +1779,16 @@ already declared in the surrounding chunk code.</p>
         self.distributed_nodes = value
         self._update_runtime_menu_labels()
         self.statusBar().showMessage(f"Distrib.QPUs set to {self.distributed_nodes}", 3000)
-        self.refresh(start_runtime=False)
+        self.refresh(start_runtime=False, preserve_runtime_output=True)
+
+    def change_noise(self) -> None:
+        options = ["noiseless", "depolarizing-1%"]
+        selected, ok = QInputDialog.getItem(self, "AER noise", "Noise model:", options, options.index(self.noise_mode), False)
+        if not ok:
+            return
+        self.noise_mode = selected
+        self._noise_action.setText(self._noise_label())
+        self.statusBar().showMessage(f"AER noise set to {self.noise_mode}. Press Run now to execute with the new setting.", 3000)
 
     def run_manual(self) -> None:
         analysis_source = self._split_save_source()
@@ -1845,6 +1873,7 @@ already declared in the surrounding chunk code.</p>
             dict(self.parameter_bindings),
             self.shots,
             preferred_backend,
+            self.noise_mode,
         )
 
     def _on_runtime_run_finished(self, token: int, counts: dict[str, int] | None, error: str | None, run_timestamp: datetime, runtime_backend: str = "", runtime_note: str = "", run_duration: float | None = None) -> None:
@@ -1936,7 +1965,7 @@ already declared in the surrounding chunk code.</p>
         def _task() -> dict:
             versions = package_versions(packages)
             updates = latest_versions_from_pypi(packages)
-            smoke = smoke_test_hadamard(self.shots)
+            smoke = smoke_test_hadamard(self.shots, self.noise_mode)
             hardware = aer_hardware_info()
             return {"versions": versions, "updates": updates, "smoke": smoke, "hardware": hardware}
 

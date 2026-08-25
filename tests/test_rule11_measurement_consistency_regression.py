@@ -40,6 +40,7 @@ mode. See /memories/repo/testing.md for the root-cause writeups.
 """
 from __future__ import annotations
 
+import multiprocessing
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -56,6 +57,13 @@ from app.pipeline import (
 
 QASM_SPLIT_ROOT = Path(__file__).resolve().parents[1] / "qasm" / "split"
 
+# Hard wall-clock ceiling for each Aer-executing call in this file. The Aer
+# MPS backend has been observed to never return for some rule-#11-expanded
+# fixtures (see /memories/repo/testing.md); running each call in a killable
+# subprocess turns that indefinite hang into a bounded, reported failure
+# instead of pinning a CPU core forever (the incident that forced a reboot).
+_AER_CALL_TIMEOUT_S = 90
+
 
 def _rules(*, split_gen_teleports_enabled: bool) -> list[RuleState]:
     return [
@@ -69,11 +77,10 @@ def _rules(*, split_gen_teleports_enabled: bool) -> list[RuleState]:
     ]
 
 
-def _real_bit_distribution(counts: dict[str, int], circuit) -> Counter:
+def _real_bit_distribution(counts: dict[str, int], correction_indices: set[int]) -> Counter:
     """Collapse a counts dict to only the "real" (non-teleport-correction)
     classical bits, keyed by their concatenated 0/1 values (throwaway
     correction bits and inter-register spaces stripped)."""
-    correction_indices = teleport_correction_clbit_indices(circuit)
     dist: Counter = Counter()
     for reading, occurrences in counts.items():
         bits = [ch for ch in reading if ch in "01"]
@@ -83,15 +90,10 @@ def _real_bit_distribution(counts: dict[str, int], circuit) -> Counter:
     return dist
 
 
-def _named_register_readings(counts: dict[str, int], circuit, register_name: str) -> Counter:
+def _named_register_readings(counts: dict[str, int], clbit_register_names: list, register_name: str) -> Counter:
     """Collapse a counts dict down to just the bits of one named classical
     register (e.g. "ans"), keyed by that register's own bit string."""
-    indices: list[int] = []
-    for index, clbit in enumerate(getattr(circuit, "clbits", [])):
-        registers = circuit.find_bit(clbit).registers
-        if registers and registers[0][0].name == register_name:
-            indices.append(index)
-    indices.sort()
+    indices = sorted(index for index, name in enumerate(clbit_register_names) if name == register_name)
     dist: Counter = Counter()
     for reading, occurrences in counts.items():
         bits = [ch for ch in reading if ch in "01"]
@@ -101,11 +103,11 @@ def _named_register_readings(counts: dict[str, int], circuit, register_name: str
     return dist
 
 
-def _run(name: str, *, split_gen_teleports_enabled: bool, shots: int = 500):
+def _run_in_process(name: str, *, split_gen_teleports_enabled: bool, shots: int, queue) -> None:
     source = (QASM_SPLIT_ROOT / name / f"{name}.dqc").read_text(encoding="utf-8")
     split_lines = split_points_from_source(source)
     bindings = {key: "1" for key in scan_inputs(source)} or None
-    return rewrite_and_analyze(
+    result = rewrite_and_analyze(
         source,
         _rules(split_gen_teleports_enabled=split_gen_teleports_enabled),
         split_lines,
@@ -114,19 +116,67 @@ def _run(name: str, *, split_gen_teleports_enabled: bool, shots: int = 500):
         timeout_s=30,
         execute_runtime=True,
     )
+    # Only picklable payload crosses the process boundary (never the
+    # QuantumCircuit/parse-tree themselves).
+    queue.put({
+        "issue_messages": [issue.message for issue in result.issues],
+        "counts": dict(result.counts or {}),
+        "correction_indices": teleport_correction_clbit_indices(result.circuit),
+        "clbit_register_names": [
+            (result.circuit.find_bit(clbit).registers[0][0].name if result.circuit.find_bit(clbit).registers else None)
+            for clbit in getattr(result.circuit, "clbits", [])
+        ] if result.circuit is not None else [],
+    })
+
+
+class _RunResult:
+    def __init__(self, payload: dict) -> None:
+        self.issue_messages: list[str] = payload["issue_messages"]
+        self.counts: dict[str, int] = payload["counts"]
+        self.correction_indices: set[int] = payload["correction_indices"]
+        self.clbit_register_names: list[str | None] = payload["clbit_register_names"]
+
+
+def _run(name: str, *, split_gen_teleports_enabled: bool, shots: int = 500) -> _RunResult:
+    # Use "spawn", not "fork": by the time this file runs, earlier test
+    # modules may have already started Qt/thread-pool background threads in
+    # this same pytest process, and fork()-ing a multithreaded process risks
+    # the child inheriting a locked allocator mutex and deadlocking forever
+    # (see /memories/repo/testing.md). "spawn" starts a clean interpreter.
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    process = ctx.Process(target=_run_in_process, args=(name,), kwargs={"split_gen_teleports_enabled": split_gen_teleports_enabled, "shots": shots, "queue": queue})
+    process.start()
+    process.join(_AER_CALL_TIMEOUT_S)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join()
+        raise AssertionError(f"{name} (rule11={split_gen_teleports_enabled}) did not complete within {_AER_CALL_TIMEOUT_S}s (Aer likely stuck)")
+    if queue.empty():
+        raise AssertionError(f"{name} (rule11={split_gen_teleports_enabled}) subprocess exited without a result (exit code {process.exitcode})")
+    return _RunResult(queue.get())
 
 
 class Rule11MeasurementConsistencyTests(unittest.TestCase):
     def _assert_matching_real_distribution(self, name: str) -> None:
-        enabled = _run(name, split_gen_teleports_enabled=True)
-        disabled = _run(name, split_gen_teleports_enabled=False)
-        self.assertFalse(enabled.issues, f"{name} (rule 11 on) issues: {[i.message for i in enabled.issues]}")
-        self.assertFalse(disabled.issues, f"{name} (rule 11 off) issues: {[i.message for i in disabled.issues]}")
+        # These fixtures have a fully deterministic "real" (non-teleport-
+        # correction) outcome for fixed inputs, so a handful of shots is
+        # statistically sufficient; a large shot count is unnecessarily slow
+        # here because each shot re-simulates the mid-circuit teleportation
+        # corrections (e.g. adder+rule11 costs ~1s/shot -- 500 shots took
+        # several minutes wall-clock, which looked like a hang but wasn't).
+        enabled = _run(name, split_gen_teleports_enabled=True, shots=5)
+        disabled = _run(name, split_gen_teleports_enabled=False, shots=5)
+        self.assertFalse(enabled.issue_messages, f"{name} (rule 11 on) issues: {enabled.issue_messages}")
+        self.assertFalse(disabled.issue_messages, f"{name} (rule 11 off) issues: {disabled.issue_messages}")
         self.assertTrue(enabled.counts, f"{name} (rule 11 on) returned no measurement counts")
         self.assertTrue(disabled.counts, f"{name} (rule 11 off) returned no measurement counts")
 
-        enabled_dist = _real_bit_distribution(enabled.counts, enabled.circuit)
-        disabled_dist = _real_bit_distribution(disabled.counts, disabled.circuit)
+        enabled_dist = _real_bit_distribution(enabled.counts, enabled.correction_indices)
+        disabled_dist = _real_bit_distribution(disabled.counts, disabled.correction_indices)
         self.assertEqual(
             dict(enabled_dist),
             dict(disabled_dist),
@@ -150,8 +200,8 @@ class Rule11MeasurementConsistencyTests(unittest.TestCase):
         # |11> must be the *only* possible readings regardless of rule #11.
         for enabled in (True, False):
             result = _run("bell_state", split_gen_teleports_enabled=enabled, shots=500)
-            self.assertFalse(result.issues, [i.message for i in result.issues])
-            dist = _real_bit_distribution(result.counts, result.circuit)
+            self.assertFalse(result.issue_messages, result.issue_messages)
+            dist = _real_bit_distribution(result.counts, result.correction_indices)
             self.assertLessEqual(set(dist), {"00", "11"}, f"bell_state (rule 11 {enabled}): unexpected uncorrelated readings {dist}")
 
     def test_splittable_runs_on_aer_across_rule_11_toggle(self) -> None:
@@ -159,7 +209,7 @@ class Rule11MeasurementConsistencyTests(unittest.TestCase):
         # counts returned" failure mode on this exact fixture.
         for enabled in (True, False):
             result = _run("splittable", split_gen_teleports_enabled=enabled, shots=500)
-            self.assertFalse(result.issues, [i.message for i in result.issues])
+            self.assertFalse(result.issue_messages, result.issue_messages)
             self.assertTrue(result.counts, f"splittable (rule 11 {enabled}) returned no measurement counts")
 
     def test_mixing_all2_matches_across_rule_11_toggle(self) -> None:
@@ -173,9 +223,9 @@ class Rule11MeasurementConsistencyTests(unittest.TestCase):
         # source, "ans" (bb + cout, the adder's sum) must always read "100".
         for enabled in (True, False):
             result = _run("mixing-all2", split_gen_teleports_enabled=enabled, shots=300)
-            self.assertFalse(result.issues, [i.message for i in result.issues])
+            self.assertFalse(result.issue_messages, result.issue_messages)
             self.assertTrue(result.counts, f"mixing-all2 (rule 11 {enabled}) returned no measurement counts")
-            ans_dist = _named_register_readings(result.counts, result.circuit, "ans")
+            ans_dist = _named_register_readings(result.counts, result.clbit_register_names, "ans")
             self.assertEqual(set(ans_dist), {"100"}, f"mixing-all2 (rule 11 {enabled}): unexpected 'ans' readings {ans_dist}")
 
 
