@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QImageReader, QKeySequence, QTextCursor
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QImageReader, QKeySequence, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -150,25 +150,61 @@ class DiagnosticsDialog(QDialog):
 
 
 class ReadmeDialog(QDialog):
-    def __init__(self, readme_text: str, parent: QWidget | None = None) -> None:
+    def __init__(self, readme_text: str, parent: QWidget | None = None, readme_dir: Path | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("ReadMe")
         self.setMinimumSize(900, 650)
+        self._readme_dir = (readme_dir or Path.cwd()).resolve()
         layout = QVBoxLayout(self)
-        browser = QTextBrowser()
-        browser.setMarkdown(readme_text)
-        browser.setOpenExternalLinks(True)
-        browser.setTextInteractionFlags(
+        self._browser = QTextBrowser()
+        self._browser.document().setBaseUrl(QUrl.fromLocalFile(f"{self._readme_dir}{os.sep}"))
+        self._browser.setMarkdown(readme_text)
+        self._browser.setOpenLinks(False)
+        self._browser.anchorClicked.connect(self._open_link)
+        self._browser.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
             | Qt.TextInteractionFlag.LinksAccessibleByMouse
         )
-        layout.addWidget(browser)
+        layout.addWidget(self._browser)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
         QTimer.singleShot(0, self._center)
+
+    def _open_link(self, url: QUrl) -> None:
+        if url.isLocalFile() or not url.scheme():
+            image_path = Path(url.toLocalFile() if url.isLocalFile() else url.toString())
+            if not image_path.is_absolute():
+                image_path = self._readme_dir / image_path
+            image_path = image_path.resolve()
+            try:
+                image_path.relative_to(self._readme_dir)
+            except ValueError:
+                return
+            if image_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}:
+                self._show_image(image_path)
+                return
+        QDesktopServices.openUrl(url)
+
+    def _show_image(self, image_path: Path) -> None:
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            QMessageBox.warning(self, "ReadMe", f"Could not load image: {image_path.name}")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(image_path.name)
+        dialog.setMinimumSize(700, 500)
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setPixmap(pixmap)
+        scroll_area = QScrollArea(dialog)
+        scroll_area.setWidget(image_label)
+        scroll_area.setWidgetResizable(True)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(scroll_area)
+        dialog.exec()
 
     def _center(self) -> None:
         parent = self.parentWidget()
@@ -905,7 +941,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "ReadMe", f"Could not read {readme_path.name}: {exc}")
             return
-        ReadmeDialog(readme_text, self).exec()
+        ReadmeDialog(readme_text, self, readme_path.parent).exec()
 
     def _populate_examples_menu(self, menu: QMenu, root: Path) -> None:
         menu.clear()

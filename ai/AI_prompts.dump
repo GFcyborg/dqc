@@ -1488,7 +1488,21 @@ Insert a new menuitem "ReadMe" as 1st item in the Help menu: it will open a dial
 2026.08.26-13.20
 ---------------------------------------------
 
-
+in the readme, right before "Day-to-Day Commands", insert the 2 screenshots in the img directory, showed side by side, scaled by 25%. 
+2026.08.26-14.00 UNDONE
+---------------------------------------------
+the 2 screenshots are not shown side-by-side, on the same line, neither are they scaled down. Fix them.
+2026.08.26-14.03 UNDONE
+---------------------------------------------
+now the images are ok, but only if the readme is viewed on a external markdown-viewer: if the user open the readme from the help menuitem, it shown messed up and incomplete (probably the internal viewer is not supporting the html code).
+2026.08.26-14.09 UNDONE
+---------------------------------------------
+still readme shown messed up: remove the embedding of the 2 images in the readme, and substitute them with 2 links ('screenshot #1' and #2) to the images (to be opened separately, on click).
+2026.08.26-14.20 UNDONE
+---------------------------------------------
+I've manually added 2 links to the Readme, but when the linked images are viewed inside the help/readme dialog, the images are shown as garbage text, not as images. fix the readme dialog, so that it supports images.
+2026.08.26-14.37
+---------------------------------------------
 
 ================ TODO:
 none.
