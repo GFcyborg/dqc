@@ -1,4 +1,4 @@
-// from: https://github.com/Qiskit/qiskit-qasm3-import
+// from: https://github.com/Qiskit/qiskit-qasm3-import#example
 // WARNING: setting param (a:=0) results in infinite always-true while-loop.
 
 OPENQASM 3.0;

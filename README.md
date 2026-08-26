@@ -1,10 +1,9 @@
 # dqc
 
-Distributed Quantum Computing (DQC): a QASM3 workbench to simulate circuit split-execution over a mesh of nodes, 1 chunk per QPU.
+Distributed Quantum Computing (DQC): a QASM3 workbench to simulate split execution over a mesh of nodes (one chunk per QPU).
 
-## Quick Setup
+## Quick Start
 
-1. Open a terminal in the repository root.
 1. Create and activate a virtual environment:
 
 ```bash
@@ -12,57 +11,74 @@ python3 -m venv .venv
 . .venv/bin/activate
 ```
 
-1. Install the dependencies:
+2. Install dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-1. Start the app from the repository root:
+3. Run the app from the repository root:
 
 ```bash
 python main.py
 ```
 
-## Notes
-
-- The app uses relative paths only. Run it from the repository root so the bundled `qasm/` examples and generated `qasm/split/` artifacts resolve correctly.
-- The default example loads from `qasm/`.
-- Save-split output is written under `qasm/split/<stem>/`.
-- If you prefer, `python -m app` is equivalent to `python main.py`.
-
-## Architecture
-
-- `app/pipeline.py` — headless logic: rewriting rules, split/teleport analysis,
-  graph building (DAG, qubit interaction, chunk dependencies), and Aer
-  execution. No Qt imports; safe to unit test directly.
-- `app/widgets.py` — Qt widgets (code editors, graph views, circuit/DAG
-  rendering) that display data produced by `pipeline.py`.
-- `app/main_window_clean.py` — the `MainWindow`, wiring menus/toolbars to the
-  pipeline and widgets. `app/main_window.py` is a thin re-export shim kept for
-  import-path stability.
-- Rewriting rules are numbered and applied in order (see `DEFAULT_RULES` in
-  `pipeline.py`); rule 0 bypasses all conditional rules, while rules 98
-  (restore `++` alias concatenation) and 99 (comment out stray pragmas) are
-  unconditional and always run last, after the conditional rules, so every
-  downstream view (Rewritten tab, circuit, runtime, graphs) sees identical code.
-
-## Tests
-
-1. Activate the virtual environment from the repository root:
+Alternative entrypoint:
 
 ```bash
-. .venv/bin/activate
+python -m app
 ```
 
-1. Install dependencies (includes test dependencies):
+## Day-to-Day Commands
+
+Run full tests with a hard timeout below 5 minutes:
 
 ```bash
-python -m pip install -r requirements.txt
+timeout 280s python -m pytest -q
 ```
 
-1. Run the regression suite:
+Run one focused test module:
 
 ```bash
-python -m pytest -q
+python -m pytest -q tests/test_pipeline_regressions.py
 ```
+
+Run one specific regression test:
+
+```bash
+python -m pytest -q tests/test_runtime_source_coherence_regression.py
+```
+
+## Paths and Generated Artifacts
+
+- Start from the project root so relative paths resolve consistently.
+- Built-in examples are under `qasm/`.
+- Split-save artifacts are written under `qasm/split/<example-name>/`.
+- The rewritten dump saved as `*.dqc.qasm` is expected to match the live Rewritten view for the active rule selection.
+
+## Architecture at a Glance
+
+- `app/pipeline.py`: headless rewrite/analyze/execute logic (rules, split/teleport analysis, graph data, AER runtime).
+- `app/widgets.py`: Qt widgets for code views, graphs, circuit rendering, and diagnostics display.
+- `app/main_window_clean.py`: top-level UI wiring (menus, actions, refresh pipeline, runtime orchestration).
+- `app/main_window.py`: compatibility shim re-exporting the main window API.
+
+Rule execution model:
+
+- Conditional rules run in numeric order.
+- Rule `0` bypasses conditional rules.
+- Unconditional rules `98` and `99` run after conditional rules.
+- Downstream consumers (Rewritten view, runtime, circuit, graphs) are designed to use the same rewritten source.
+
+## Most Important Regression Tests
+
+These are the highest-signal tests for core app behavior:
+
+- `tests/test_pipeline_regressions.py`: rewrite pipeline order, fallbacks, and core transformations.
+- `tests/test_runtime_source_coherence_regression.py`: runtime must consume the same rewritten source shown in UI paths.
+- `tests/test_save_split_dump_regression.py`: saved `*.dqc.qasm` must match Rewritten view and reject internal-only markers.
+- `tests/test_rewrite_spans.py`: rewrite span mapping and coloring anchors across rule interactions.
+- `tests/test_rule11_measurement_consistency_regression.py`: rule #11 split-generated teleportation measurement coherence.
+- `tests/test_chunk_edge_label_centering_regression.py`: chunk dependency edge-label placement stability.
+
+## [Free Palestine!](https://en.wikipedia.org/wiki/Israeli-occupied_territories)

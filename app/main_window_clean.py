@@ -74,6 +74,21 @@ from .pipeline import (
 from .widgets import CircuitView, CodeEditor, DiagnosticsView, GraphTab, HtmlCodeView, ParseTreeView, RulePanel, QiskitDagTab, ChunkDagTab, QubitInteractionTab, runtime_measurement_html
 
 
+RUNTIME_STOPWATCH_PREFIX = "Running simulation..."
+RUNTIME_STOPWATCH_BASE_COLOR = "#1f6f2a"
+RUNTIME_STOPWATCH_TIMEOUT_COLOR = "#c41e3a"
+RUNTIME_LABEL_STYLE_TEMPLATE = "font-weight: 700; color: {color}; padding-left: 8px; padding-right: 8px;"
+
+LOADING_CIRCUIT_PREFIX = "Loading circuit"
+LOADING_CIRCUIT_COLOR = "#1d4ed8"
+
+REFRESH_DEBOUNCE_MS = 250
+FOOTER_BLINK_INTERVAL_MS = 350
+FOOTER_MESSAGE_DURATION_MS = 8000
+RUNTIME_STATE_TICK_MS = 120
+CIRCUIT_LOADING_TICK_MS = 120
+
+
 class ClickableLabel(QLabel):
     clicked = Signal()
 
@@ -123,6 +138,37 @@ class DiagnosticsDialog(QDialog):
 
     def update_report(self, report: str) -> None:
         self._browser.setHtml(report)
+
+    def _center(self) -> None:
+        parent = self.parentWidget()
+        target = parent.screen() if parent is not None and parent.screen() is not None else QApplication.primaryScreen()
+        if target is None:
+            return
+        geometry = self.frameGeometry()
+        geometry.moveCenter(target.availableGeometry().center())
+        self.move(geometry.topLeft())
+
+
+class ReadmeDialog(QDialog):
+    def __init__(self, readme_text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("ReadMe")
+        self.setMinimumSize(900, 650)
+        layout = QVBoxLayout(self)
+        browser = QTextBrowser()
+        browser.setMarkdown(readme_text)
+        browser.setOpenExternalLinks(True)
+        browser.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        layout.addWidget(browser)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+        QTimer.singleShot(0, self._center)
 
     def _center(self) -> None:
         parent = self.parentWidget()
@@ -223,17 +269,17 @@ class MainWindow(QMainWindow):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self.refresh)
         self._footer_blink_timer = QTimer(self)
-        self._footer_blink_timer.setInterval(350)
+        self._footer_blink_timer.setInterval(FOOTER_BLINK_INTERVAL_MS)
         self._footer_blink_timer.timeout.connect(self._toggle_footer_visibility)
         self._footer_clear_timer = QTimer(self)
         self._footer_clear_timer.setSingleShot(True)
         self._footer_clear_timer.timeout.connect(self._clear_footer_message)
         self._runtime_state_timer = QTimer(self)
         self._runtime_state_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._runtime_state_timer.setInterval(120)
+        self._runtime_state_timer.setInterval(RUNTIME_STATE_TICK_MS)
         self._runtime_state_timer.timeout.connect(self._refresh_runtime_run_state)
         self._circuit_loading_timer = QTimer(self)
-        self._circuit_loading_timer.setInterval(120)
+        self._circuit_loading_timer.setInterval(CIRCUIT_LOADING_TICK_MS)
         self._circuit_loading_timer.timeout.connect(self._tick_circuit_loading_indicator)
         self._circuit_loading_frames = ["◐", "◓", "◑", "◒"]
         self._circuit_loading_frame_index = 0
@@ -250,14 +296,14 @@ class MainWindow(QMainWindow):
         self._runtime_refresh_requested = False
         self._runtime_stopwatch_label = QLabel("")
         self._runtime_stopwatch_label.setVisible(False)
-        self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
+        self._runtime_stopwatch_label.setStyleSheet(self._runtime_label_style(RUNTIME_STOPWATCH_BASE_COLOR))
         self._circuit_loading_indicator = QLabel("")
         self._circuit_loading_indicator.setVisible(False)
         self._circuit_loading_indicator.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._circuit_loading_indicator.setStyleSheet("font-weight: 700; color: #1d4ed8; padding-left: 8px; padding-right: 8px;")
+        self._circuit_loading_indicator.setStyleSheet(self._runtime_label_style(LOADING_CIRCUIT_COLOR))
         # Reserve enough width for the widest "Loading circuit <frame>" text so it
         # never gets clipped when the Runtime header is squeezed by resizing.
-        widest_loading_text = "Loading circuit " + max(self._circuit_loading_frames, key=len)
+        widest_loading_text = f"{LOADING_CIRCUIT_PREFIX} " + max(self._circuit_loading_frames, key=len)
         self._circuit_loading_indicator.setMinimumWidth(
             self._circuit_loading_indicator.fontMetrics().horizontalAdvance(widest_loading_text) + 20
         )
@@ -292,7 +338,15 @@ class MainWindow(QMainWindow):
         return "monolithic"
 
     def _update_window_title(self) -> None:
-        self.setWindowTitle(f"DQC Quantum Workbench - {self.current_file.resolve()}")
+        try:
+            display_path = self.current_file.relative_to(self.workspace_root)
+        except ValueError:
+            display_path = self.current_file
+        self.setWindowTitle(f"DQC Quantum Workbench - {display_path}")
+
+    @staticmethod
+    def _runtime_label_style(color: str) -> str:
+        return RUNTIME_LABEL_STYLE_TEMPLATE.format(color=color)
 
     def _clear_footer_message(self) -> None:
         self._footer_blink_timer.stop()
@@ -305,7 +359,7 @@ class MainWindow(QMainWindow):
             return
         self._footer_label.setVisible(not self._footer_label.isVisible())
 
-    def _show_status_feedback(self, message: str, timeout_ms: int = 5000) -> None:
+    def _show_status_feedback(self, message: str, timeout_ms: int = FOOTER_MESSAGE_DURATION_MS) -> None:
         if self._footer_label is None:
             self.statusBar().showMessage(message, timeout_ms)
             return
@@ -417,9 +471,9 @@ class MainWindow(QMainWindow):
                 (self._runtime_shots_label(), self.change_shots),
                 (self._runtime_timeout_label(), self.change_timeout),
             ],
-            [self._circuit_loading_indicator],
             accent="#10b981",
             area_name="Runtime",
+            before_actions_widgets=[self._circuit_loading_indicator],
         )
         runtime_layout.addWidget(runtime_header)
         shots_btn: QPushButton | None = None
@@ -578,7 +632,7 @@ class MainWindow(QMainWindow):
         self._schedule_startup_graph_normalization()
         self._schedule_startup_graph_normalization(150)
 
-    def _make_header(self, title: str, left_actions: list[tuple[str, Callable[[], None]]], right_widgets: list[QWidget] | None = None, accent: str = "#3b82f6", area_name: str | None = None) -> QWidget:
+    def _make_header(self, title: str, left_actions: list[tuple[str, Callable[[], None]]], right_widgets: list[QWidget] | None = None, accent: str = "#3b82f6", area_name: str | None = None, before_actions_widgets: list[QWidget] | None = None) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -590,6 +644,8 @@ class MainWindow(QMainWindow):
         label.customContextMenuRequested.connect(self._on_area_header_context_menu)
         layout.addWidget(label)
         layout.addStretch(1)
+        for widget_item in before_actions_widgets or []:
+            layout.addWidget(widget_item)
         for text, handler in left_actions:
             btn = QPushButton(text)
             btn.clicked.connect(handler)
@@ -726,13 +782,11 @@ class MainWindow(QMainWindow):
         lines.append("</ul>")
         lines.append(self._render_bom_target_list_html())
         lines.append(self._render_import_health_html(packages))
-        devices = ", ".join(hardware["aer_devices"])
-        gpu_status = "available to Aer (the app currently uses Aer's default CPU device)" if hardware["aer_gpu_available"] else "unavailable (Aer reports CPU only)"
         lines.append("<p><b>Local simulation resources:</b></p><ul>")
         lines.append(f"<li>Host memory: {hardware['memory_total_mb']:,} MiB total; {hardware['memory_available_mb']:,} MiB currently available.</li>")
         lines.append(f"<li>Aer max memory per run: {hardware['aer_memory_budget_mb']:,} MiB (90% of currently available memory; recalculated when a run starts).</li>")
         lines.append(f"<li>CPU parallelism: {hardware['physical_cpus']} physical cores; Aer may use up to {hardware['usable_logical_cpus']} usable logical CPUs.</li>")
-        lines.append(f"<li>Aer devices: {devices}. GPU offload: {gpu_status}.</li>")
+        lines.append("<li>Aer execution device: CPU.</li>")
         lines.append("</ul>")
         lines.append(
             f"<p><b>Simulation noise:</b> the configured mode is <b>{html.escape(self.noise_mode)}</b>. "
@@ -831,6 +885,9 @@ class MainWindow(QMainWindow):
         self._runtime_actions = (shots_action, timeout_action, nodes_action)
 
         help_menu = self.menuBar().addMenu("Help")
+        readme_action = QAction("ReadMe", self)
+        readme_action.triggered.connect(self.show_readme)
+        help_menu.addAction(readme_action)
         gpl_action = QAction("GPL3 Licence", self)
         gpl_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.gnu.org/licenses/gpl-3.0.en.html")))
         help_menu.addAction(gpl_action)
@@ -840,6 +897,15 @@ class MainWindow(QMainWindow):
         qcomm_action = QAction("Q-comm Template Guide", self)
         qcomm_action.triggered.connect(self._show_qcomm_template_guide)
         help_menu.addAction(qcomm_action)
+
+    def show_readme(self) -> None:
+        readme_path = self.workspace_root / "README.md"
+        try:
+            readme_text = readme_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "ReadMe", f"Could not read {readme_path.name}: {exc}")
+            return
+        ReadmeDialog(readme_text, self).exec()
 
     def _populate_examples_menu(self, menu: QMenu, root: Path) -> None:
         menu.clear()
@@ -868,6 +934,10 @@ class MainWindow(QMainWindow):
     def _show_qcomm_template_guide(self) -> None:
         """Show a help dialog documenting the q-comm_template.qasm contract."""
         template_path = Path(__file__).with_name("q-comm_template.qasm")
+        try:
+            template_display_path = template_path.relative_to(self.workspace_root)
+        except ValueError:
+            template_display_path = Path(template_path.name)
 
         # Read current template and run validation
         if template_path.exists():
@@ -875,7 +945,7 @@ class MainWindow(QMainWindow):
             errors = validate_qcomm_template(template_text)
         else:
             template_text = ""
-            errors = [f"Template file not found: {template_path}"]
+            errors = [f"Template file not found: {template_display_path}"]
 
         ident_rows = "".join(
             f"<tr>"
@@ -922,7 +992,7 @@ class MainWindow(QMainWindow):
 <h2 style='margin-top:0;'>Q-comm Template Guide</h2>
 
 <p>The file <code style='color:#1e3a8a;'>{template_path.name}</code>
-(located at <code>{template_path}</code>) defines a single quantum teleportation
+(located at <code>{template_display_path}</code>) defines a single quantum teleportation
 circuit in QASM 3 syntax.  Rewriting rule&nbsp;<b>#11 (Split-generated teleportations)</b>
 reads this template and injects one adapted copy for <em>each qubit dependency</em>
 that must cross a split-point boundary.</p>
@@ -978,7 +1048,7 @@ already declared in the surrounding chunk code.</p>
         dlg.exec()
 
     def _schedule_refresh(self) -> None:
-        self._refresh_timer.start(250)
+        self._refresh_timer.start(REFRESH_DEBOUNCE_MS)
 
     def _prepare_loading_view_state(self, target: Path) -> None:
         target_name = target.name or str(target)
@@ -1016,7 +1086,7 @@ already declared in the surrounding chunk code.</p>
 
     def _start_circuit_loading_indicator(self) -> None:
         self._circuit_loading_frame_index = 0
-        self._circuit_loading_indicator.setText("Loading circuit ◐")
+        self._circuit_loading_indicator.setText(f"{LOADING_CIRCUIT_PREFIX} ◐")
         self._circuit_loading_indicator.setVisible(True)
         if not self._circuit_loading_timer.isActive():
             self._circuit_loading_timer.start()
@@ -1029,7 +1099,7 @@ already declared in the surrounding chunk code.</p>
     def _tick_circuit_loading_indicator(self) -> None:
         self._circuit_loading_frame_index = (self._circuit_loading_frame_index + 1) % len(self._circuit_loading_frames)
         frame = self._circuit_loading_frames[self._circuit_loading_frame_index]
-        self._circuit_loading_indicator.setText(f"Loading circuit {frame}")
+        self._circuit_loading_indicator.setText(f"{LOADING_CIRCUIT_PREFIX} {frame}")
 
     def _finalize_visual_refresh(self, token: int) -> None:
         if token != self._visual_refresh_token:
@@ -1441,7 +1511,7 @@ already declared in the surrounding chunk code.</p>
             # Show stopwatch immediately for any runtime-capable refresh,
             # even while rewrite/analysis is still preparing runtime input.
             self._runtime_stopwatch_label.setVisible(True)
-            self._runtime_stopwatch_label.setText("Running simulation... 00:00:00.000")
+            self._runtime_stopwatch_label.setText(f"{RUNTIME_STOPWATCH_PREFIX} 00:00:00.000")
             # Clear last run's output right away and force a repaint now: the
             # rewrite/analysis below runs synchronously and can take a moment,
             # during which Qt would otherwise leave the old readings on screen.
@@ -1459,7 +1529,8 @@ already declared in the surrounding chunk code.</p>
             self._show_status_feedback("Ignored split pragmas inside blocked scopes.")
 
         active_rules = [RuleState(rule.rule_id, rule.name, rule.description, rule.enabled) for rule in self.rules]
-        needs_parameters = bool(scan_inputs(analysis_source)) and not self.parameter_bindings and not getattr(self, "_suppress_parameter_prompt", False)
+        has_runtime_parameters = bool(scan_inputs(analysis_source))
+        needs_parameters = has_runtime_parameters and not self.parameter_bindings and not getattr(self, "_suppress_parameter_prompt", False)
         try:
             result = rewrite_and_analyze(analysis_source, active_rules, analysis_split_points, self.parameter_bindings, self.shots, timeout_s=self.timeout_s, execute_runtime=False, distributed_nodes=self.distributed_nodes)
             if result.parse_tree is not None:
@@ -1476,7 +1547,7 @@ already declared in the surrounding chunk code.</p>
             self.original_editor.line_number_area.update()
             if preserve_runtime_output:
                 pass
-            elif bool(scan_inputs(analysis_source)) and not self.parameter_bindings and getattr(self, "_suppress_parameter_prompt", False):
+            elif has_runtime_parameters and not self.parameter_bindings and getattr(self, "_suppress_parameter_prompt", False):
                 self._shutdown_runtime_executor()
                 self.runtime_output.setPlainText("Saved split chunks. Parameter input is preserved for this session.")
             elif needs_parameters:
@@ -1800,12 +1871,12 @@ already declared in the surrounding chunk code.</p>
 
     def _start_runtime_stopwatch(self) -> None:
         self._runtime_stopwatch_label.setVisible(True)
-        self._runtime_stopwatch_label.setText("Running simulation... 00:00:00.000")
+        self._runtime_stopwatch_label.setText(f"{RUNTIME_STOPWATCH_PREFIX} 00:00:00.000")
 
     def _stop_runtime_stopwatch(self) -> None:
         self._runtime_stopwatch_label.clear()
         self._runtime_stopwatch_label.setVisible(False)
-        self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
+        self._runtime_stopwatch_label.setStyleSheet(self._runtime_label_style(RUNTIME_STOPWATCH_BASE_COLOR))
 
     def _update_runtime_stopwatch(self) -> None:
         if self._runtime_run_start_monotonic is None:
@@ -1817,11 +1888,11 @@ already declared in the surrounding chunk code.</p>
         hours, rem = divmod(total_ms, 3_600_000)
         minutes, rem = divmod(rem, 60_000)
         seconds, millis = divmod(rem, 1000)
-        self._runtime_stopwatch_label.setText(f"Running simulation... {hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}")
+        self._runtime_stopwatch_label.setText(f"{RUNTIME_STOPWATCH_PREFIX} {hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}")
         if self.timeout_s > 0 and elapsed >= self.timeout_s:
-            self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #c41e3a; padding-left: 8px; padding-right: 8px;")
+            self._runtime_stopwatch_label.setStyleSheet(self._runtime_label_style(RUNTIME_STOPWATCH_TIMEOUT_COLOR))
         else:
-            self._runtime_stopwatch_label.setStyleSheet("font-weight: 700; color: #1f6f2a; padding-left: 8px; padding-right: 8px;")
+            self._runtime_stopwatch_label.setStyleSheet(self._runtime_label_style(RUNTIME_STOPWATCH_BASE_COLOR))
 
     def _shutdown_runtime_executor(self) -> None:
         self._runtime_state_timer.stop()

@@ -1438,19 +1438,57 @@ clicking the "Split suggestions: ..." blue text should have the same effect as u
 2026.08.25-19.36    (post-fixed my typo: "Distrib.QPUs" blue text)
 ---------------------------------------------
 
+We are about to finalize the development of this app, which is almost ready. Without breaking the semantics, we need to do some general cleanup: streamline the code by simplifying, deduplicating, removing unreachable code, and making it more readable (e.g. meaningful var-names, no magic numbers, etc.). Add comments where the code is more dense or compact (e.g. lambdas).
+Write comprehensive documentation in the readme page, but don´t make it verbose (show how to do things by showing commands & examples); also document most important unit-tests (not all of them!).
+2026.08.25-19.56    (UNDONE)
+---------------------------------------------
+I've found a reference to an absolute path of my computer (/home/gf/Documents/SPDM801_thesis/... in the Q-comm Template Guide): make sure that all absolute refs (both in code and in documentation) are gone!
+All paths should be relative to the project root-dir.
+2026.08.25-20.14    (UNDONE)
+---------------------------------------------
+something got broken in last changes: when live-injecting some split-points in adder.qasm (close to the inner scopes) the relevant qubits (which are supposed to give fixed-results) change. Also: make sure the app does not get frozen (with 100% cpu): I had to force-reboot (again).
+2026.08.25-20.40    (UNDONE)
+---------------------------------------------
+(.venv) gf@zilla:~/Documents/SPDM801_thesis/dqc$ git fetch origin
+(.venv) gf@zilla:~/Documents/SPDM801_thesis/dqc$ git reset --hard origin/$(git branch --show-current)		#main
+HEAD is now at 63aa89a noisy AER; rules help; GUI fixes
+---------------------------------------------
+
+Let's try again this one (I've tried it before, but the app got silently messed up under the hood, especially in rule #11 logic, so I had to git reset to latest remote commit, and had to delete a couple of chat sessions). This time, don't guess: ask me, before dismissing stuff around (e.g. last time, you removed the monolithic fallback, without being asked to, just because you thought it took too long ... ).
+The app is almost ready, so don´t spoil the good work (check against unit-tests): you must cleanup the code, simplifying where possible, deduplicating, pruning dead/unreachable code, renaming vars to meaningful varnames, given name to "magic numbers", translate absolute paths into relative ones (both in code and documentation), add comments where the code is more cryptic/dense (e.g. lambdas).
+Update the documentation in the readme, but don't make it verbose: mostly operative commands, how to do stuff (examples), and at the end a section about most important unit-tests (not all of them).
+But please, this time, do it carefully!
+Also, make sure to avoid system-freeze/crashes: your testing must use timeouts, to bound computate time <5min.
+2026.08.26-10.50
+---------------------------------------------
+I'm wondering whether the GPU offload (hw support) currently used by the app is including AER built-in support (CUDA 11 & 12), as suggested here: https://github.com/Qiskit/qiskit-aer#installing-gpu-support
+Is it risky for app stability, to use it now?
+2026.08.26-12.28
+
+[answer:
+Stability risk: installing the GPU package in the current environment would be a meaningful environment change, not an immediate app enhancement. It could introduce CUDA/driver/VRAM compatibility issues, and it would not automatically make the app’s MPS-first path use the GPU. Existing CPU tests would not validate GPU behavior.
+My recommendation is to leave the current stable CPU setup unchanged for now. If GPU support is desired, test it in a separate virtual environment with explicit GPU selection and a small regression matrix before integrating it into the app.]
+---------------------------------------------
+Ok, then we should not advertise for GPU-offload capabilities as we do in the Diagnostics page.
+Fix it.
+2026.08.26-12.33
+---------------------------------------------
+Reduce CPU parallelism/usage so that the app leaves at least 1 CPU-core free: this should prevent taking all computer resources, and so prevent freezing/crashing.
+2026.08.26-12.39
+---------------------------------------------
+When loading a new file, the transient blue message "Loading circuit ..." appears in the same place where it used to be the "Distrib.QPUs" button (now gone), but now that message placement is suboptimal, as it pushes all other buttons to the left, and then they need to move again in place when the message is gone.
+Let's just move "Loading circuit ..." message to the immediate left of the "Run now" button, so that the message doesn't move the other buttons at all.
+Also, make the flashing messages (in the bottom footer of the window) last longer: sometimes I cannot even read them completely, before they are already gone.
+2026.08.26-12.53
+---------------------------------------------
+add an external link to the bottom of the readme: "Free Palestine!" --> https://en.wikipedia.org/wiki/Israeli-occupied_territories
+2026.08.26-13.13
+---------------------------------------------
+Insert a new menuitem "ReadMe" as 1st item in the Help menu: it will open a dialog showing the local readme file (formatted, not as simple text).
+2026.08.26-13.20
+---------------------------------------------
+
 
 
 ================ TODO:
-unreachable code?
-
-We are about to finalize the development of this app, which is almost ready: without breaking the semantics, we need to do some general cleanup: fix IDE warnings in pipeline.py (e.g. AerSimulator().available_devices() ), and then streamline the code by simplifying, deduplicating, and making it more readable (e.g. use meaningful var-names, no magic numbers, etc.).
-Add comments where the code is more dense or compact.
-Write comprehensive documentation in the readme page, but don´t make it verbose (show how to do things by showing the commands).
-
-
-This todo has been created by Copilot: to be verified (I didn´t see it happening, actually, but let´s dig it).
-Root-caused and fixed the mixing-all2.dqc fixed-results mismatch: the Aer 0.17.2 crash workaround (`_flatten_simple_if_else_to_legacy_condition`) only flattens rule #11's simple Z/X teleport-correction if-blocks to legacy conditions, leaving everything else as modern control flow; when the circuit ALSO contains a `while` loop, this partial flattening made Aer silently randomize the flattened corrections (confirmed via a minimal hand-written repro isolating adder+teleport code with/without a while loop). Fixed by skipping the flatten pass entirely whenever the circuit contains any control-flow op it can't itself flatten (WhileLoopOp/ForLoopOp/SwitchCaseOp/complex IfElseOp) -- verified this doesn't reintroduce the original crash on splittable.dqc. Added regression test test_mixing_all2_matches_across_rule_11_toggle.
-
-qiskit-example.dqc turned out NOT to reproduce this same corruption right now: its 2nd split point currently injects ZERO teleports at all (dependency analysis reports "no shared qubits", likely because the split pragma lands inside an `if (mid[0]) { reset inner_alias; }` block after rule #10's broadcast-unfold, breaking that chunk's parse and silently falling back). That's a separate, still-open dependency-detection bug -- since nothing gets teleported there, toggling rule #11 currently has no effect on it (trivially "matching"), which isn't the same as it being correctly handled. Left as a follow-up TODO below.
-2026.08.24-(latest)
-qiskit-example.dqc's 2nd split point injects no teleports at all (dependency analysis silently falls back to "no shared qubits", likely due to the split pragma landing inside an if-block's broadcast-unfolded body and breaking that chunk's parse) -- investigate and fix so q[0..2] actually gets teleported into chunk 3 as expected.
+none.

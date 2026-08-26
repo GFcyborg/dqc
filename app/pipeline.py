@@ -2579,16 +2579,22 @@ def aer_memory_budget_mb(available_bytes: int | None = None) -> int:
     return max(1, int(available_bytes * AER_MEMORY_FRACTION / BYTES_PER_MEBIBYTE))
 
 
+def aer_cpu_parallelism() -> int:
+    """Leave one logical CPU available for the operating system and GUI."""
+    try:
+        available_cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available_cpus = os.cpu_count() or 1
+    return max(1, available_cpus - 1)
+
+
 def aer_hardware_info() -> dict[str, Any]:
     """Return the host and Aer capabilities that affect local simulation."""
     import psutil
     from qiskit_aer import AerSimulator
 
     memory = psutil.virtual_memory()
-    try:
-        usable_logical_cpus = len(os.sched_getaffinity(0))
-    except AttributeError:
-        usable_logical_cpus = os.cpu_count() or 1
+    usable_logical_cpus = aer_cpu_parallelism()
     available_devices = AerSimulator().available_devices() or ()
     devices = tuple(str(device).upper() for device in available_devices)
     available_mb = int(memory.available / BYTES_PER_MEBIBYTE)
@@ -2622,12 +2628,9 @@ def _run_aer_counts_with_fallback(compiled: Any, shots: int, preferred_backend: 
     from qiskit_aer import AerSimulator
 
     # Prefer MPS first, then fall back to the default simulator if needed.
-    # Let Aer use all locally available CPU cores to shorten runtime; Aer
-    # internally balances threads across experiments/shots/gates as needed.
-    try:
-        available_cores = len(os.sched_getaffinity(0))
-    except AttributeError:
-        available_cores = os.cpu_count() or 1
+    # Keep one logical CPU free so a demanding simulation cannot monopolize
+    # the operating system and the GUI.
+    available_cores = aer_cpu_parallelism()
     backend_options = {
         "max_memory_mb": aer_memory_budget_mb(),
         "max_parallel_threads": available_cores,
@@ -2932,7 +2935,12 @@ def smoke_test_hadamard(shots: int = 256, noise_mode: str = "noiseless") -> dict
     circuit = QuantumCircuit(1, 1)
     circuit.h(0)
     circuit.measure(0, 0)
-    backend_options = {}
+    parallelism = aer_cpu_parallelism()
+    backend_options = {
+        "max_parallel_threads": parallelism,
+        "max_parallel_experiments": 1,
+        "max_parallel_shots": parallelism,
+    }
     noise_model = _aer_noise_model(noise_mode)
     if noise_model is not None:
         backend_options["noise_model"] = noise_model
