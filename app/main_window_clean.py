@@ -82,7 +82,9 @@ RUNTIME_LABEL_STYLE_TEMPLATE = "font-weight: 700; color: {color}; padding-left: 
 LOADING_CIRCUIT_PREFIX = "Loading circuit"
 LOADING_CIRCUIT_COLOR = "#1d4ed8"
 
-REFRESH_DEBOUNCE_MS = 250
+# Typed original-code edits debounce refresh() this long; the right-click
+# split-pragma toggle bypasses this timer and refreshes immediately instead.
+REFRESH_DEBOUNCE_MS = 2000
 FOOTER_BLINK_INTERVAL_MS = 350
 FOOTER_MESSAGE_DURATION_MS = 8000
 RUNTIME_STATE_TICK_MS = 120
@@ -565,7 +567,8 @@ class MainWindow(QMainWindow):
         graphs_header_layout.addStretch(1)
         self.graph_source_toggle = QCheckBox("Use rewritten code")
         self.graph_source_toggle.setChecked(True)
-        self.graph_source_toggle.stateChanged.connect(self.refresh_graphs)
+        # Checked <=> rule #0 (bypass all) disabled; the two controls stay in sync.
+        self.graph_source_toggle.toggled.connect(self._on_graph_source_toggle_changed)
         self.graph_source_toggle.setStyleSheet("color: #0f172a;")
         graphs_header_layout.addWidget(self.graph_source_toggle)
         graphs_header_layout.addStretch(4)
@@ -1272,8 +1275,16 @@ already declared in the surrounding chunk code.</p>
             if rule.rule_id == rule_id:
                 rule.enabled = checked
                 break
-        self.rule_panel.set_states({rule.rule_id for rule in self.rules if rule.enabled}, self._rule_bypass_enabled())
+        bypass = self._rule_bypass_enabled()
+        self.rule_panel.set_states({rule.rule_id for rule in self.rules if rule.enabled}, bypass)
+        # Keep the Graphs-view checkbox synced: checked means rule #0 is off.
+        self.graph_source_toggle.blockSignals(True)
+        self.graph_source_toggle.setChecked(not bypass)
+        self.graph_source_toggle.blockSignals(False)
         self.refresh()
+
+    def _on_graph_source_toggle_changed(self, checked: bool) -> None:
+        self.on_rule_toggled(RULE_ID_BYPASS_ALL, not checked)
 
     def _rule_bypass_enabled(self) -> bool:
         return any(rule.rule_id == RULE_ID_BYPASS_ALL and rule.enabled for rule in self.rules)
@@ -1459,25 +1470,13 @@ already declared in the surrounding chunk code.</p>
     def refresh_graphs(self) -> None:
         if not hasattr(self, "_latest_result"):
             return
-        
-        # Determine which result to use based on checkbox state
+
+        # graph_source_toggle mirrors rule #0 (bypass all): when checked, the
+        # already-computed rewritten result reflects the active rules; when
+        # unchecked, rule #0 has forced that same result down to (near-)original.
+        result = self._latest_result
         use_rewritten = self.graph_source_toggle.isChecked()
-        
-        if use_rewritten:
-            # Use the rewritten code result (already computed with active rules)
-            result = self._latest_result
-        else:
-            # Analyze original code without any rewrite rules (bypass all)
-            analysis_source = self._split_save_source()
-            bypass_rule = RuleState(rule_id=0, name="Bypass", description="", enabled=True)
-            try:
-                result = rewrite_and_analyze(analysis_source, [bypass_rule], self.split_points.copy(), self.parameter_bindings, self.shots, timeout_s=self.timeout_s, distributed_nodes=self.distributed_nodes)
-                if result.parse_tree is not None:
-                    result.ast_graph = build_ast_graph(result.parse_tree)
-            except Exception:
-                # Fall back to rewritten result if analysis fails
-                result = self._latest_result
-        
+
         self.ast_tree_view.load_tree(result.parse_tree)
         self._ast_program = result.parse_tree
         self._ast_source_editor = self.rewritten_view if use_rewritten else self.original_editor
@@ -1693,11 +1692,12 @@ already declared in the surrounding chunk code.</p>
         return dqc_path
 
     def _flush_pending_refresh(self) -> None:
-        # A live code edit debounces `refresh()` by 250ms (`_schedule_refresh`),
-        # so `_latest_result`/`rewritten_text()` can be stale for up to that
-        # long after typing. Force a synchronous refresh here (without kicking
-        # off a runtime run) so the saved .dqc.qasm always reflects the exact
-        # live original-code text and active rule set at save time.
+        # A live code edit debounces `refresh()` by REFRESH_DEBOUNCE_MS
+        # (`_schedule_refresh`), so `_latest_result`/`rewritten_text()` can be
+        # stale for up to that long after typing. Force a synchronous refresh
+        # here (without kicking off a runtime run) so the saved .dqc.qasm
+        # always reflects the exact live original-code text and active rule
+        # set at save time.
         if self._refresh_timer.isActive():
             self._refresh_timer.stop()
             self.refresh(start_runtime=False)

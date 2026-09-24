@@ -1503,6 +1503,25 @@ still readme shown messed up: remove the embedding of the 2 images in the readme
 I've manually added 2 links to the Readme, but when the linked images are viewed inside the help/readme dialog, the images are shown as garbage text, not as images. fix the readme dialog, so that it supports images.
 2026.08.26-14.37
 ---------------------------------------------
+How is the KaHyPar used exactly here? what are their nodes and hyperedges? is it working or is it just falling back to the app heuristic?
+2026.08.26-17.25
+---------------------------------------------
+I want to simplify the logic behind "use rewritten code" checkbox (in the Graphs view): it should work just like the inverse of rule#0 toggle (which bypasses all conditional rules).
+When "use rewritten code" is checked (default), then rule#0 is unchecked (also default), and vice versa.
+Of course they should live-sync with each-other state.
+clean-up unused/dead code of the old implementation, after making sure all tests passed.
+2026.09.24-12.35
+---------------------------------------------
+when the users manually change the original code, the app detects the input events and auto re-compute the output and updates the graphs accordingly. This is generally ok, but the app is updating the GUI too often: the users may not be done [yet] with typing a complete instruction. This creates unwanted graph- and runtime-errors (temporarily). The updates should be less aggressive (how about 2 sec from last typing-event?).
+Also: typed-changes updates should be delayed differently from the right-click split-pragma injection (whose update should not be delayed).
+2026.09.24-12.54
+---------------------------------------------
+the diagnostics says that there are a couple of library updates that we may want to get:
+matplotlib: 3.11.1 (out-of-date: latest is 3.11.2)
+networkx: 3.6.1 (out-of-date: latest is 3.7)
+Update documentation and references accordingly, without breaking anything (test all !!! the app is almost finished).
+2026.09.24-13.01
+---------------------------------------------
 
 ================ TODO:
 none.

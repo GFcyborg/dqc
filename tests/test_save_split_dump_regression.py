@@ -40,9 +40,9 @@ class SaveSplitDumpRegressionTests(unittest.TestCase):
             app.processEvents()
 
     def test_save_flushes_pending_debounced_refresh_before_persisting(self) -> None:
-        # A live edit debounces refresh() by 250ms (_schedule_refresh); saving
-        # split chunks immediately after typing must not persist a stale
-        # .dqc.qasm computed before that edit -- it must flush first.
+        # A live edit debounces refresh() (_schedule_refresh); saving split
+        # chunks immediately after typing must not persist a stale .dqc.qasm
+        # computed before that edit -- it must flush first.
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         app = QApplication.instance() or QApplication([])
 
