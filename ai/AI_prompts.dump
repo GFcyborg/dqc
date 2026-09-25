@@ -1522,6 +1522,13 @@ networkx: 3.6.1 (out-of-date: latest is 3.7)
 Update documentation and references accordingly, without breaking anything (test all !!! the app is almost finished).
 2026.09.24-13.01
 ---------------------------------------------
+backend_options["noise_model"] in pipeline.py is raising a minor IDE warning:
+Argument of type "NoiseModel" cannot be assigned to parameter "value" of type "int" in function "__setitem__"
+  "NoiseModel" is not assignable to "int"
+Fix it.
+2026.09.25-11.40
+---------------------------------------------
+
 
 ================ TODO:
 none.

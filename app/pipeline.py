@@ -2936,7 +2936,7 @@ def smoke_test_hadamard(shots: int = 256, noise_mode: str = "noiseless") -> dict
     circuit.h(0)
     circuit.measure(0, 0)
     parallelism = aer_cpu_parallelism()
-    backend_options = {
+    backend_options: dict[str, Any] = {
         "max_parallel_threads": parallelism,
         "max_parallel_experiments": 1,
         "max_parallel_shots": parallelism,
