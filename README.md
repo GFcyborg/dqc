@@ -4,7 +4,7 @@ Distributed Quantum Computing (DQC): a QASM3 workbench to simulate split executi
 
 ## Quick Start
 
-1. Create and activate a virtual environment:
+1. In Linux, use the setup script, or manually create/activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -27,6 +27,18 @@ Alternative entrypoint:
 
 ```bash
 python -m app
+```
+
+For Windows[11], you need a slightly different setup in powershell:
+
+```powershell
+PS C:\...\dqc> py install 3.12
+PS C:\...\dqc> Set-ExecutionPolicy -Scope 
+PS C:\...\dqc> .\.venv\Scripts\Activate.ps1
+(.venv) PS C:\...\dqc> python -m pip install --upgrade pip
+(.venv) PS C:\...\dqc> Get-Content requirements.txt | Where-Object { $_ -notmatch '^kahypar' } | Set-Content req-win.txt
+(.venv) PS C:\...\dqc> python -m pip install -r req-win.txt
+(.venv) PS C:\...\dqc> python main.py
 ```
 
 ## [Screenshot #1](img/atomic_qasm.png)  
